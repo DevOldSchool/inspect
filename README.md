@@ -14,8 +14,8 @@ Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the
 - **Equipment recommendations**: rank owned bank/equipped gear for inspected NPC weaknesses.
 - **Bank highlights**: highlight recommended bank items with rank indicators.
 - **Item prices**: show GE price, high alch, low alch, and high-alch profit or loss.
-- **Item sources**: show how an item can be obtained from shops, monsters, skilling, quests, and clues where available.
-- **Requirement checks**: show item equip and source skill requirements with local skill readiness.
+- **Account-aware item sources**: show acquisition methods with local quest/skill readiness and prioritise currently usable methods for Ironman accounts.
+- **Requirement checks**: show item equip requirements and per-source quest/skill readiness from local account state.
 - **NPC required items**: show item requirements for monsters that need a finishing item, with inventory/equipment readiness checks.
 - **Drop filters**: filter NPC drops into useful categories like valuable, rare, Slayer-only, clue, Ironman, alchable, and upgrade materials.
 - **Compare tray**: save an NPC, item, or player inspection as the current comparison and reopen it from the sidebar.
@@ -27,9 +27,9 @@ Item inspect shows wiki-backed item details, prices, requirements, sources, gear
 
 Searches for multi-version items show each exact variant with its item icon, version anchor, and game ID. Searches that already name a unique variant, such as `Dragon dagger(p++)`, open that variant directly.
 
-The Sources section expands item acquisition into readable categories such as shops, monsters, skilling, quests, and clue-related sources.
+The Sources section expands item acquisition into readable categories such as shops, monsters, skilling, quests, and clue-related sources. Each source marks known quest and skill requirements as met or missing. Ironman, Ultimate Ironman, Hardcore Ironman, and Group Ironman accounts see compatible methods with met requirements first; trade-only methods remain visible but are marked unavailable.
 
-The Requirements section combines equip requirements and source requirements in one readiness panel. Skill requirements are checked against your local real skill levels and update after login or level changes.
+The Requirements section reports item equip/use readiness separately. Local skill levels refresh after login or level changes, while source quest progress refreshes when the account state is loaded.
 
 ![Item inspect example](images/item.png)
 

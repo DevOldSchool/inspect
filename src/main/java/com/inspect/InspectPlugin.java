@@ -6,6 +6,9 @@ import com.inspect.item.ItemInspectVariantSelector;
 import com.inspect.item.ItemPriceSummary;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemInspectService;
+import com.inspect.item.ItemSourceAccountMode;
+import com.inspect.item.ItemSourceReadiness;
+import com.inspect.item.ItemSourceReadinessEvaluator;
 import com.inspect.inspect.InspectPanel;
 import com.inspect.inspect.PinnedInspectState;
 import com.inspect.inspect.RecentInspectEntry;
@@ -54,14 +57,14 @@ import net.runelite.api.NPC;
 import net.runelite.api.NPCComposition;
 import net.runelite.api.Player;
 import net.runelite.api.PlayerComposition;
+import net.runelite.api.Quest;
+import net.runelite.api.QuestState;
 import net.runelite.api.Skill;
 import net.runelite.api.WorldType;
 import net.runelite.api.events.ClientTick;
-import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOpened;
-import net.runelite.api.events.StatChanged;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
@@ -134,9 +137,6 @@ public class InspectPlugin extends Plugin
 	private EquipmentRecommendation currentNpcRecommendation;
 	private String currentNpcRecommendationMessage;
 	private Map<String, Integer> currentNpcDropItemIds = Collections.emptyMap();
-	private ItemInspectInfo currentItemInfo;
-	private ItemInspectInfo currentItemEquippedInfo;
-	private ItemPriceSummary currentItemPriceSummary;
 	private PinnedInspectState pinnedInspectState = PinnedInspectState.empty();
 	private final Set<String> playerInspectTargetsThisTick = new HashSet<>();
 	private final Deque<String> recentNpcInspects = new ArrayDeque<>();
@@ -294,7 +294,6 @@ public class InspectPlugin extends Plugin
 		currentNpcRecommendation = null;
 		currentNpcRecommendationMessage = null;
 		currentNpcDropItemIds = Collections.emptyMap();
-		clearCurrentItemInspect();
 		pinnedInspectState = PinnedInspectState.empty();
 		resetInspectMenuMarker();
 		log.debug("Inspect plugin stopped");
@@ -344,13 +343,19 @@ public class InspectPlugin extends Plugin
 			Map<Skill, Integer> skillLevels = snapshotSkillLevels();
 			ItemRequirementSummary requirementSummary = itemRequirementSummary(info, skillLevels);
 			ItemPriceSummary priceSummary = itemPriceSummary(info);
+			Map<Quest, QuestState> questStates = snapshotItemSourceQuestStates(info);
+			ItemSourceAccountMode accountMode = itemSourceAccountMode();
+			ItemSourceReadiness sourceReadiness = ItemSourceReadinessEvaluator.evaluate(
+				info.getSourcePlan(),
+				skillLevels,
+				questStates,
+				accountMode);
 			SwingUtilities.invokeLater(() ->
 			{
 				addRecentItem(recentItemInspects, info.getItemId(), info.getDisplayName());
 				bankEquipmentOverlay.clear();
 				inspectPanel.setRecentItems(recentItems());
-				setCurrentItemInspect(info, null, priceSummary);
-				inspectPanel.showItemInfo(info, null, requirementSummary, priceSummary);
+				inspectPanel.showItemInfo(info, null, requirementSummary, priceSummary, sourceReadiness);
 			});
 		});
 	}
@@ -399,21 +404,6 @@ public class InspectPlugin extends Plugin
 	public void onClientTick(ClientTick event)
 	{
 		resetInspectMenuMarker();
-	}
-
-	@Subscribe
-	public void onGameStateChanged(GameStateChanged event)
-	{
-		if (event.getGameState() == GameState.LOGGED_IN)
-		{
-			refreshCurrentItemRequirements();
-		}
-	}
-
-	@Subscribe
-	public void onStatChanged(StatChanged event)
-	{
-		refreshCurrentItemRequirements();
 	}
 
 	@Subscribe
@@ -739,7 +729,6 @@ public class InspectPlugin extends Plugin
 	{
 		Map<EquipmentInventorySlot, EquippedItem> equippedItems = snapshotEquippedItems();
 		addRecentItem(recentItemInspects, itemId, itemName);
-		clearCurrentItemInspect();
 		SwingUtilities.invokeLater(() ->
 		{
 			clientToolbar.openPanel(inspectNavButton);
@@ -935,10 +924,6 @@ public class InspectPlugin extends Plugin
 		}
 
 		final String lookupQuery = resolvedQuery;
-		if ("Item".equals(type))
-		{
-			clearCurrentItemInspect();
-		}
 		SwingUtilities.invokeLater(() -> inspectPanel.showSearchLoading(type, lookupQuery));
 		if ("NPC".equals(type))
 		{
@@ -1079,48 +1064,28 @@ public class InspectPlugin extends Plugin
 				{
 					ItemPriceSummary priceSummary = itemPriceSummary(result.info);
 					ItemRequirementSummary requirementSummary = itemRequirementSummary(result.info, skillLevels);
+					Map<Quest, QuestState> questStates = snapshotItemSourceQuestStates(result.info);
+					ItemSourceAccountMode accountMode = itemSourceAccountMode();
+					ItemSourceReadiness sourceReadiness = ItemSourceReadinessEvaluator.evaluate(
+						result.info.getSourcePlan(),
+						skillLevels,
+						questStates,
+						accountMode);
 					SwingUtilities.invokeLater(() ->
 					{
 						addRecentItem(recentItemInspects, result.info.getItemId(),
 							result.info.getDisplayName() == null ? itemName : result.info.getDisplayName());
 						bankEquipmentOverlay.clear();
 						inspectPanel.setRecentItems(recentItems());
-						setCurrentItemInspect(result.info, result.equippedInfo, priceSummary);
-						inspectPanel.showItemInfo(result.info, result.equippedInfo, requirementSummary, priceSummary);
+						inspectPanel.showItemInfo(
+							result.info,
+							result.equippedInfo,
+							requirementSummary,
+							priceSummary,
+							sourceReadiness);
 					});
 				});
 			});
-	}
-
-	private void setCurrentItemInspect(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemPriceSummary priceSummary)
-	{
-		currentItemInfo = info;
-		currentItemEquippedInfo = equippedInfo;
-		currentItemPriceSummary = priceSummary;
-	}
-
-	private void clearCurrentItemInspect()
-	{
-		currentItemInfo = null;
-		currentItemEquippedInfo = null;
-		currentItemPriceSummary = null;
-	}
-
-	private void refreshCurrentItemRequirements()
-	{
-		if (inspectPanel == null || !inspectPanel.isItemActive() || currentItemInfo == null)
-		{
-			return;
-		}
-
-		ItemRequirementSummary requirementSummary = itemRequirementSummary(currentItemInfo, snapshotSkillLevels());
-		SwingUtilities.invokeLater(() ->
-		{
-			if (inspectPanel != null && inspectPanel.isItemActive() && currentItemInfo != null)
-			{
-				inspectPanel.refreshItemInfo(currentItemInfo, currentItemEquippedInfo, requirementSummary, currentItemPriceSummary);
-			}
-		});
 	}
 
 	private void findRecommendedBankGear(NpcCombatInfo info)
@@ -1460,14 +1425,23 @@ public class InspectPlugin extends Plugin
 			return;
 		}
 
-		List<NpcItemRequirementStatus> itemRequirementStatuses = npcItemRequirementStatuses(currentNpcInfo);
-		SwingUtilities.invokeLater(() -> showNpcInfo(
-			currentNpcInfo,
-			currentNpcRecommendation,
-			currentNpcRecommendationMessage,
-			itemRequirementStatuses,
-			currentNpcDropItemIds
-		));
+		NpcCombatInfo info = currentNpcInfo;
+		EquipmentRecommendation recommendation = currentNpcRecommendation;
+		String recommendationMessage = currentNpcRecommendationMessage;
+		Map<String, Integer> dropItemIds = currentNpcDropItemIds;
+		List<NpcItemRequirementStatus> itemRequirementStatuses = npcItemRequirementStatuses(info);
+		SwingUtilities.invokeLater(() ->
+		{
+			if (inspectPanel != null && inspectPanel.isNpcActive() && currentNpcInfo == info)
+			{
+				inspectPanel.refreshNpcInfo(
+					info,
+					recommendation,
+					recommendationMessage,
+					itemRequirementStatuses,
+					dropItemIds);
+			}
+		});
 	}
 
 	private static List<NpcItemRequirementAlternativeStatus> npcItemRequirementAlternativeStatuses(
@@ -1918,6 +1892,33 @@ public class InspectPlugin extends Plugin
 			levels.put(skill, client.getRealSkillLevel(skill));
 		}
 		return levels;
+	}
+
+	private Map<Quest, QuestState> snapshotItemSourceQuestStates(ItemInspectInfo info)
+	{
+		Map<Quest, QuestState> states = new EnumMap<>(Quest.class);
+		if (info == null || client.getGameState() != GameState.LOGGED_IN)
+		{
+			return states;
+		}
+
+		for (Quest quest : ItemSourceReadinessEvaluator.referencedQuests(info.getSourcePlan()))
+		{
+			try
+			{
+				states.put(quest, quest.getState(client));
+			}
+			catch (RuntimeException ex)
+			{
+				log.debug("Unable to read quest state for {}", quest.getName(), ex);
+			}
+		}
+		return states;
+	}
+
+	private ItemSourceAccountMode itemSourceAccountMode()
+	{
+		return ItemSourceAccountMode.fromVarbitValue(client.getVarbitValue(VarbitID.IRONMAN));
 	}
 
 	static ItemRequirementSummary itemRequirementSummary(ItemInspectInfo info, Map<Skill, Integer> skillLevels)

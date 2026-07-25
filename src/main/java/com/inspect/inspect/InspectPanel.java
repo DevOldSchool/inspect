@@ -5,7 +5,9 @@ import com.inspect.item.ItemInspectVariant;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemPriceSummary;
 import com.inspect.item.ItemSource;
+import com.inspect.item.ItemSourceReadiness;
 import com.inspect.item.ItemSourceRequirement;
+import com.inspect.item.ItemSourceStatus;
 import com.inspect.npc.CombatStyleRecommendation;
 import com.inspect.npc.EquipmentRecommendation;
 import com.inspect.npc.NpcCombatInfo;
@@ -426,6 +428,13 @@ public class InspectPanel extends PluginPanel
 		renderNpcInfo(info, recommendation, recommendationMessage, statuses, itemIds);
 	}
 
+	public void refreshNpcInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage,
+		List<NpcItemRequirementStatus> itemRequirementStatuses, Map<String, Integer> dropItemIds)
+	{
+		preserveScrollOnNextReset = true;
+		showInfo(info, recommendation, recommendationMessage, itemRequirementStatuses, dropItemIds);
+	}
+
 	private void renderNpcInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage,
 		List<NpcItemRequirementStatus> itemRequirementStatuses, Map<String, Integer> dropItemIds)
 	{
@@ -511,17 +520,26 @@ public class InspectPanel extends PluginPanel
 
 	public void showItemInfo(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemRequirementSummary requirementSummary, ItemPriceSummary priceSummary)
 	{
-		lastItemRenderer = () -> renderItemInfo(info, equippedInfo, requirementSummary, priceSummary);
-		renderItemInfo(info, equippedInfo, requirementSummary, priceSummary);
+		showItemInfo(info, equippedInfo, requirementSummary, priceSummary, null);
 	}
 
-	public void refreshItemInfo(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemRequirementSummary requirementSummary, ItemPriceSummary priceSummary)
+	public void showItemInfo(
+		ItemInspectInfo info,
+		ItemInspectInfo equippedInfo,
+		ItemRequirementSummary requirementSummary,
+		ItemPriceSummary priceSummary,
+		ItemSourceReadiness sourceReadiness)
 	{
-		preserveScrollOnNextReset = true;
-		showItemInfo(info, equippedInfo, requirementSummary, priceSummary);
+		lastItemRenderer = () -> renderItemInfo(info, equippedInfo, requirementSummary, priceSummary, sourceReadiness);
+		renderItemInfo(info, equippedInfo, requirementSummary, priceSummary, sourceReadiness);
 	}
 
-	private void renderItemInfo(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemRequirementSummary requirementSummary, ItemPriceSummary priceSummary)
+	private void renderItemInfo(
+		ItemInspectInfo info,
+		ItemInspectInfo equippedInfo,
+		ItemRequirementSummary requirementSummary,
+		ItemPriceSummary priceSummary,
+		ItemSourceReadiness sourceReadiness)
 	{
 		activeTab = "Item";
 		reset();
@@ -584,7 +602,7 @@ public class InspectPanel extends PluginPanel
 
 		addComparison(info, equippedInfo);
 		addPinnedItemComparison(info);
-		addItemSources(info);
+		addItemSources(info, sourceReadiness);
 
 		if (info.getExamine() != null)
 		{
@@ -1316,7 +1334,7 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(chips(tags));
 	}
 
-	private void addItemSources(ItemInspectInfo info)
+	private void addItemSources(ItemInspectInfo info, ItemSourceReadiness sourceReadiness)
 	{
 		if ((info.getSourcePlan() == null || info.getSourcePlan().isEmpty())
 			&& info.getSourceSummary() == null
@@ -1328,7 +1346,16 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(section("Sources"));
 		if (info.getSourcePlan() != null && !info.getSourcePlan().isEmpty())
 		{
-			addFullWidth(itemSourcePlanPanel(info.getSourcePlan()));
+			if (sourceReadiness != null && sourceReadiness.getSources() != null
+				&& !sourceReadiness.getSources().isEmpty())
+			{
+				addFullWidth(message(sourceAccountSummary(sourceReadiness)));
+				addFullWidth(itemSourcePlanPanel(sourceReadiness));
+			}
+			else
+			{
+				addFullWidth(itemSourcePlanPanel(info.getSourcePlan()));
+			}
 			return;
 		}
 
@@ -1341,7 +1368,42 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(message("Requires " + info.getQuestRequirements() + "."));
 	}
 
+	private static String sourceAccountSummary(ItemSourceReadiness readiness)
+	{
+		if (readiness.getAccountMode().isIronman())
+		{
+			return readiness.getAccountMode().getDisplayName()
+				+ " account: available methods with met requirements are shown first.";
+		}
+		return "Standard account: source requirements use your current quest and skill progress.";
+	}
+
 	private static JPanel itemSourcePlanPanel(List<ItemSource> sources)
+	{
+		List<ItemSourceStatus> statuses = new ArrayList<>();
+		for (ItemSource source : sources)
+		{
+			statuses.add(new ItemSourceStatus(
+				source,
+				Collections.emptyList(),
+				Collections.emptyList(),
+				true));
+		}
+		return itemSourcePlanPanel(statuses, false, false);
+	}
+
+	private static JPanel itemSourcePlanPanel(ItemSourceReadiness readiness)
+	{
+		return itemSourcePlanPanel(
+			readiness.getSources(),
+			true,
+			readiness.getAccountMode().isIronman());
+	}
+
+	private static JPanel itemSourcePlanPanel(
+		List<ItemSourceStatus> sources,
+		boolean accountAware,
+		boolean ironman)
 	{
 		JPanel panel = new JPanel(new GridBagLayout());
 		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -1355,7 +1417,7 @@ public class InspectPanel extends PluginPanel
 		{
 			constraints.gridy = i;
 			constraints.insets = new Insets(i == 0 ? 0 : 5, 0, 0, 0);
-			panel.add(itemSourceBlock(sources.get(i)), constraints);
+			panel.add(itemSourceBlock(sources.get(i), accountAware, ironman), constraints);
 		}
 
 		Dimension preferred = panel.getPreferredSize();
@@ -1364,8 +1426,9 @@ public class InspectPanel extends PluginPanel
 		return panel;
 	}
 
-	private static JPanel itemSourceBlock(ItemSource source)
+	private static JPanel itemSourceBlock(ItemSourceStatus status, boolean accountAware, boolean ironman)
 	{
+		ItemSource source = status.getSource();
 		JPanel block = new JPanel(new GridBagLayout());
 		block.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		block.setBorder(new EmptyBorder(6, 7, 7, 7));
@@ -1376,17 +1439,40 @@ public class InspectPanel extends PluginPanel
 		constraints.fill = GridBagConstraints.HORIZONTAL;
 		constraints.anchor = GridBagConstraints.WEST;
 
+		int row = 0;
 		JLabel category = new JLabel(source.getCategory());
 		category.setForeground(ColorScheme.BRAND_ORANGE);
 		category.setFont(FontManager.getRunescapeSmallFont());
-		constraints.gridy = 0;
+		constraints.gridy = row++;
 		constraints.insets = new Insets(0, 0, 3, 0);
 		block.add(category, constraints);
 
-		JTextArea detail = sourceDetailArea(sourceDetail(source));
-		constraints.gridy = 1;
+		JTextArea detail = sourceDetailArea(sourceDetail(source, !accountAware));
+		constraints.gridy = row++;
 		constraints.insets = new Insets(0, 0, 0, 0);
 		block.add(detail, constraints);
+
+		if (accountAware && ironman && !status.isIronmanRelevant())
+		{
+			constraints.gridy = row++;
+			constraints.insets = new Insets(3, 0, 0, 0);
+			block.add(itemRequirementRow("Not available to Ironman accounts", false), constraints);
+		}
+		if (accountAware)
+		{
+			for (String requirement : status.getMetRequirements())
+			{
+				constraints.gridy = row++;
+				constraints.insets = new Insets(3, 0, 0, 0);
+				block.add(itemRequirementRow(requirement, true), constraints);
+			}
+			for (String requirement : status.getMissingRequirements())
+			{
+				constraints.gridy = row++;
+				constraints.insets = new Insets(3, 0, 0, 0);
+				block.add(itemRequirementRow(requirement, false), constraints);
+			}
+		}
 
 		Dimension preferred = block.getPreferredSize();
 		block.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 36, preferred.height));
@@ -1412,7 +1498,7 @@ public class InspectPanel extends PluginPanel
 		return area;
 	}
 
-	private static String sourceDetail(ItemSource source)
+	private static String sourceDetail(ItemSource source, boolean includeRequirements)
 	{
 		List<String> parts = new ArrayList<>();
 		if (source.getDetails() != null)
@@ -1425,7 +1511,7 @@ public class InspectPanel extends PluginPanel
 				}
 			}
 		}
-		if (source.getRequirements() != null && !source.getRequirements().isEmpty())
+		if (includeRequirements && source.getRequirements() != null && !source.getRequirements().isEmpty())
 		{
 			parts.add("Levels: " + sourceRequirements(source.getRequirements()));
 		}
