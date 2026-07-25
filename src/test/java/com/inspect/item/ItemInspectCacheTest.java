@@ -1,5 +1,6 @@
 package com.inspect.item;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -7,6 +8,8 @@ import com.google.gson.Gson;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
 import org.junit.Rule;
 import org.junit.Test;
@@ -35,6 +38,24 @@ public class ItemInspectCacheTest
 	}
 
 	@Test
+	public void readsFreshVariantSearchFromDisk() throws Exception
+	{
+		Path directory = temporaryFolder.newFolder().toPath();
+		ItemInspectCache cache = new ItemInspectCache(new Gson(), directory);
+		List<ItemInspectVariant> variants = variants();
+
+		cache.putVariants("Dragon dagger", variants, 1000L).get();
+		cache.shutDown();
+
+		ItemInspectCache restored = new ItemInspectCache(new Gson(), directory);
+		Optional<List<ItemInspectVariant>> cached = restored.getVariants("dragon dagger", 1100L, 7).get();
+
+		assertTrue(cached.isPresent());
+		assertEquals(variants, cached.get());
+		restored.shutDown();
+	}
+
+	@Test
 	public void ignoresExpiredDiskCache() throws Exception
 	{
 		Path directory = temporaryFolder.newFolder().toPath();
@@ -45,6 +66,19 @@ public class ItemInspectCacheTest
 		Optional<ItemInspectInfo> cached = cache.get(4151, 1000L + 8L * 24L * 60L * 60L, 7).get();
 
 		assertFalse(cached.isPresent());
+		cache.shutDown();
+	}
+
+	@Test
+	public void keepsVariantCacheAtExactTtlBoundaryAndExpiresItAfterward() throws Exception
+	{
+		Path directory = temporaryFolder.newFolder().toPath();
+		ItemInspectCache cache = new ItemInspectCache(new Gson(), directory);
+		cache.putVariants("Dragon dagger", variants(), 1000L).get();
+		long sevenDays = 7L * 24L * 60L * 60L;
+
+		assertTrue(cache.getVariants("Dragon dagger", 1000L + sevenDays, 7).get().isPresent());
+		assertFalse(cache.getVariants("Dragon dagger", 1000L + sevenDays + 1L, 7).get().isPresent());
 		cache.shutDown();
 	}
 
@@ -93,6 +127,18 @@ public class ItemInspectCacheTest
 
 		assertFalse(cached.isPresent());
 		restored.shutDown();
+	}
+
+	@Test
+	public void ignoresCorruptVariantDiskCache() throws Exception
+	{
+		Path directory = temporaryFolder.newFolder().toPath();
+		Files.write(directory.resolve("variants.json"), "{".getBytes(StandardCharsets.UTF_8));
+		ItemInspectCache cache = new ItemInspectCache(new Gson(), directory);
+
+		assertFalse(cache.getVariants("Dragon dagger", 1100L, 7).get().isPresent());
+		assertFalse(Files.exists(directory.resolve("variants.json")));
+		cache.shutDown();
 	}
 
 	@Test
@@ -162,12 +208,15 @@ public class ItemInspectCacheTest
 		ItemInspectCache cache = new ItemInspectCache(new Gson(), directory);
 		ItemInspectInfo info = info(4151, 1000L);
 		cache.put(info).get();
+		cache.putVariants("Dragon dagger", variants(), 1000L).get();
 
 		cache.startUp(true).get();
 
 		assertFalse(cache.get(4151, 1100L, 7).get().isPresent());
+		assertFalse(cache.getVariants("Dragon dagger", 1100L, 7).get().isPresent());
 		assertFalse(Files.exists(directory.resolve(info.cacheKey() + ".json")));
 		assertFalse(Files.exists(directory.resolve("index.json")));
+		assertFalse(Files.exists(directory.resolve("variants.json")));
 		cache.shutDown();
 	}
 
@@ -197,5 +246,22 @@ public class ItemInspectCacheTest
 			.fetchedAtEpochSecond(fetchedAt)
 			.sourceUrl("https://oldschool.runescape.wiki/w/Abyssal_whip")
 			.build();
+	}
+
+	private static List<ItemInspectVariant> variants()
+	{
+		return Arrays.asList(
+			new ItemInspectVariant(
+				1215,
+				"Dragon dagger",
+				"Dragon_dagger",
+				"Unpoisoned",
+				"https://oldschool.runescape.wiki/w/Dragon_dagger#Unpoisoned"),
+			new ItemInspectVariant(
+				5698,
+				"Dragon dagger(p++)",
+				"Dragon_dagger",
+				"Poison++",
+				"https://oldschool.runescape.wiki/w/Dragon_dagger#Poison++"));
 	}
 }

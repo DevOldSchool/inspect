@@ -1,6 +1,7 @@
 package com.inspect.inspect;
 
 import com.inspect.item.ItemInspectInfo;
+import com.inspect.item.ItemInspectVariant;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemPriceSummary;
 import com.inspect.item.ItemSource;
@@ -75,6 +76,8 @@ public class InspectPanel extends PluginPanel
 	private final ItemManager itemManager;
 	@Setter
     private SearchHandler searchHandler;
+	@Setter
+	private ItemVariantInspectHandler itemVariantInspectHandler;
 	@Setter
     private GearRecommendationHandler gearRecommendationHandler;
 	@Setter
@@ -154,7 +157,7 @@ public class InspectPanel extends PluginPanel
 
     public void showEmpty()
 	{
-		activeTab = "Item";
+		activeTab = lastSearchType;
 		reset();
 		addFullWidth(message("Search above, or right-click an NPC or item and choose Inspect."));
 		addCacheManagement();
@@ -189,6 +192,128 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(searchTitle(type + " Search"));
 		addErrorMessage(query + ": Unable to load info from the OSRS Wiki.", "Wiki search failed for " + type + ": " + query);
 		refresh();
+	}
+
+	public void showItemVariantPicker(String query, List<ItemInspectVariant> variants)
+	{
+		List<ItemInspectVariant> choices = variants == null
+			? Collections.emptyList()
+			: Collections.unmodifiableList(new ArrayList<>(variants));
+		Runnable renderer = () -> renderItemVariantPicker(query, choices);
+		lastItemRenderer = renderer;
+		renderer.run();
+	}
+
+	private void renderItemVariantPicker(String query, List<ItemInspectVariant> variants)
+	{
+		activeTab = "Item";
+		lastSearchType = "Item";
+		lastSearchText = query == null ? "" : query;
+		reset();
+		addFullWidth(searchTitle("Choose item variant"));
+		addFullWidth(message(variants.size() + " variants matched " + lastSearchText
+			+ ". Choose the exact version to inspect."));
+		addFullWidth(itemVariantPickerPanel(variants));
+		refresh();
+	}
+
+	private JPanel itemVariantPickerPanel(List<ItemInspectVariant> variants)
+	{
+		JPanel panel = new JPanel(new GridBagLayout());
+		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		panel.setBorder(new EmptyBorder(4, 4, 4, 4));
+
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.gridx = 0;
+		constraints.weightx = 1.0;
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+		constraints.insets = new Insets(2, 0, 2, 0);
+		for (int i = 0; i < variants.size(); i++)
+		{
+			constraints.gridy = i;
+			panel.add(itemVariantRow(variants.get(i)), constraints);
+		}
+
+		int height = Math.max(1, variants.size()) * 50 + 8;
+		panel.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, height));
+		panel.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, height));
+		return panel;
+	}
+
+	private JPanel itemVariantRow(ItemInspectVariant variant)
+	{
+		JPanel row = new JPanel(new GridBagLayout());
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setBorder(new EmptyBorder(3, 3, 3, 3));
+		row.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 32, 46));
+
+		JLabel icon = new JLabel("", SwingConstants.CENTER);
+		icon.setPreferredSize(new Dimension(38, 38));
+		icon.setToolTipText(variant.getDisplayName());
+		if (variant.getId() > 0 && itemManager != null)
+		{
+			itemManager.getImage(variant.getId()).addTo(icon);
+		}
+
+		GridBagConstraints iconConstraints = new GridBagConstraints();
+		iconConstraints.gridx = 0;
+		iconConstraints.gridy = 0;
+		iconConstraints.gridheight = 2;
+		iconConstraints.insets = new Insets(0, 0, 0, 4);
+		row.add(icon, iconConstraints);
+
+		JButton button = new JButton(valueOrDash(variant.getDisplayName()));
+		button.setHorizontalAlignment(SwingConstants.LEFT);
+		button.setFocusPainted(false);
+		button.setBackground(ColorScheme.MEDIUM_GRAY_COLOR);
+		button.setForeground(ColorScheme.BRAND_ORANGE);
+		button.setFont(FontManager.getRunescapeSmallFont());
+		button.setBorder(new EmptyBorder(3, 5, 3, 5));
+		button.setToolTipText(variant.getSourceUrl());
+		button.addActionListener(event ->
+		{
+			if (itemVariantInspectHandler != null)
+			{
+				itemVariantInspectHandler.inspectItem(variant);
+			}
+		});
+
+		GridBagConstraints buttonConstraints = new GridBagConstraints();
+		buttonConstraints.gridx = 1;
+		buttonConstraints.gridy = 0;
+		buttonConstraints.weightx = 1.0;
+		buttonConstraints.fill = GridBagConstraints.HORIZONTAL;
+		row.add(button, buttonConstraints);
+
+		JLabel details = new JLabel(itemVariantDetails(variant));
+		details.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		details.setFont(FontManager.getRunescapeSmallFont());
+		details.setBorder(new EmptyBorder(2, 5, 0, 0));
+
+		GridBagConstraints detailConstraints = new GridBagConstraints();
+		detailConstraints.gridx = 1;
+		detailConstraints.gridy = 1;
+		detailConstraints.weightx = 1.0;
+		detailConstraints.anchor = GridBagConstraints.WEST;
+		detailConstraints.fill = GridBagConstraints.HORIZONTAL;
+		row.add(details, detailConstraints);
+		return row;
+	}
+
+	private static String itemVariantDetails(ItemInspectVariant variant)
+	{
+		List<String> details = new ArrayList<>();
+		if (variant.getWikiAnchor() != null)
+		{
+			details.add(displayAnchor(variant.getWikiAnchor()));
+		}
+		details.add("ID " + variant.getId());
+		return String.join(" \u00B7 ", details);
+	}
+
+	private static String displayAnchor(String anchor)
+	{
+		return anchor.replace('_', ' ');
 	}
 
 	public void showSearchDisabled(String disabledMessage)
@@ -3182,6 +3307,11 @@ public class InspectPanel extends PluginPanel
 	public interface SearchHandler
 	{
 		void search(String type, String query);
+	}
+
+	public interface ItemVariantInspectHandler
+	{
+		void inspectItem(ItemInspectVariant variant);
 	}
 
 	public interface GearRecommendationHandler

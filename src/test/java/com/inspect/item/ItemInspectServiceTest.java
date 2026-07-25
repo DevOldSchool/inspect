@@ -11,6 +11,7 @@ import com.google.gson.annotations.SerializedName;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -120,6 +121,70 @@ public class ItemInspectServiceTest
 		assertNull(itemService.search("missing item").get(5, TimeUnit.SECONDS));
 		assertEquals(1, responses.requestCount());
 		assertEquals("missing item", responses.requests().get(0).url().queryParameter("srsearch"));
+	}
+
+	@Test
+	public void variantSearchCachesEmptyResult() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, "{\"query\":{\"search\":[]}}");
+		ItemInspectService itemService = service(responses);
+
+		List<ItemInspectVariant> first = itemService.searchVariants("missing item", 7).get(5, TimeUnit.SECONDS);
+		List<ItemInspectVariant> second = itemService.searchVariants("missing item", 7).get(5, TimeUnit.SECONDS);
+
+		assertTrue(first.isEmpty());
+		assertEquals(first, second);
+		assertEquals(1, responses.requestCount());
+	}
+
+	@Test
+	public void variantSearchReturnsExactIdsAndSelectedVariantSkipsAnotherBucketLookup() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, searchResponse("Dragon dagger"));
+		responses.enqueue(200, "{\"bucket\":["
+			+ "{\"page_name\":\"Dragon dagger\",\"item_id\":[\"1215\"],\"item_name\":\"Dragon dagger\",\"version_anchor\":\"Unpoisoned\"},"
+			+ "{\"page_name\":\"Dragon dagger\",\"item_id\":[\"5698\"],\"item_name\":\"Dragon dagger(p++)\",\"version_anchor\":\"Poison++\"},"
+			+ "{\"page_name\":\"Dragon dagger\",\"item_id\":[\"1231\"],\"item_name\":\"Dragon dagger(p)\",\"version_anchor\":\"Poison\"},"
+			+ "{\"page_name\":\"Dragon dagger\",\"item_id\":[\"5680\"],\"item_name\":\"Dragon dagger(p+)\",\"version_anchor\":\"Poison+\"}"
+			+ "]}");
+		responses.enqueue(200, parseResponse("{{Infobox Item\n"
+			+ "|version1 = Unpoisoned\n"
+			+ "|version2 = Poison\n"
+			+ "|version3 = Poison+\n"
+			+ "|version4 = Poison++\n"
+			+ "|name1 = Dragon dagger\n"
+			+ "|name2 = Dragon dagger(p)\n"
+			+ "|name3 = Dragon dagger(p+)\n"
+			+ "|name4 = Dragon dagger(p++)\n"
+			+ "|id1 = 1215\n"
+			+ "|id2 = 1231\n"
+			+ "|id3 = 5680\n"
+			+ "|id4 = 5698\n"
+			+ "}}\n"));
+		ItemInspectService itemService = service(responses);
+
+		List<ItemInspectVariant> variants = itemService.searchVariants("Dragon dagger", 7).get(5, TimeUnit.SECONDS);
+		List<ItemInspectVariant> cachedVariants = itemService.searchVariants("Dragon dagger", 7).get(5, TimeUnit.SECONDS);
+		ItemInspectVariant selected = variants.get(3);
+		ItemInspectInfo info = itemService.inspect(selected, 7).get(5, TimeUnit.SECONDS);
+
+		assertEquals(4, variants.size());
+		assertEquals(variants, cachedVariants);
+		assertEquals(1215, variants.get(0).getId());
+		assertEquals("Dragon dagger(p++)", selected.getDisplayName());
+		assertEquals(5698, selected.getId());
+		assertEquals("Poison++", selected.getWikiAnchor());
+		assertEquals(5698, info.getItemId());
+		assertEquals("Dragon dagger(p++)", info.getDisplayName());
+		assertEquals(3, responses.requestCount());
+		assertEquals("query", responses.requests().get(0).url().queryParameter("action"));
+		assertEquals("bucket", responses.requests().get(1).url().queryParameter("action"));
+		assertTrue(responses.requests().get(1).url().queryParameter("query")
+			.contains(".where('page_name','Dragon dagger')"));
+		assertEquals("parse", responses.requests().get(2).url().queryParameter("action"));
+		assertEquals("Dragon_dagger", responses.requests().get(2).url().queryParameter("page"));
 	}
 
 	@Test

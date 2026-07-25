@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -83,6 +84,51 @@ public class ItemInspectService
 		long now = System.currentTimeMillis() / 1000L;
 		return cache.get(itemId, now, ttlDays)
 			.thenCompose(cached -> cached.map(CompletableFuture::completedFuture).orElseGet(() -> fetch(itemId, itemName)));
+	}
+
+	public CompletableFuture<ItemInspectInfo> inspect(ItemInspectVariant variant, int ttlDays)
+	{
+		if (variant == null || variant.getId() < 0 || variant.getWikiPage() == null
+			|| variant.getWikiPage().trim().isEmpty())
+		{
+			return CompletableFuture.completedFuture(null);
+		}
+
+		long now = System.currentTimeMillis() / 1000L;
+		return cache.get(variant.getId(), now, ttlDays)
+			.thenCompose(cached -> cached.map(CompletableFuture::completedFuture).orElseGet(() -> fetch(variant)));
+	}
+
+	public CompletableFuture<List<ItemInspectVariant>> searchVariants(String query)
+	{
+		return searchVariants(query, 0);
+	}
+
+	public CompletableFuture<List<ItemInspectVariant>> searchVariants(String query, int ttlDays)
+	{
+		if (query == null || query.trim().isEmpty())
+		{
+			return CompletableFuture.completedFuture(Collections.emptyList());
+		}
+
+		String normalizedQuery = query.trim();
+		long now = System.currentTimeMillis() / 1000L;
+		return cache.getVariants(normalizedQuery, now, ttlDays)
+			.thenCompose(cached -> cached
+				.map(CompletableFuture::completedFuture)
+				.orElseGet(() -> searchVariantsWiki(normalizedQuery)));
+	}
+
+	private CompletableFuture<List<ItemInspectVariant>> searchVariantsWiki(String query)
+	{
+		return searchPage(query)
+			.thenCompose(page -> page == null
+				? CompletableFuture.completedFuture(Collections.emptyList())
+				: findVariants(page))
+			.thenCompose(variants -> cache.putVariants(
+				query,
+				variants,
+				System.currentTimeMillis() / 1000L).thenApply(ignored -> variants));
 	}
 
 	public CompletableFuture<ItemInspectInfo> search(String query)
@@ -160,22 +206,34 @@ public class ItemInspectService
 	private CompletableFuture<ItemInspectInfo> fetch(int itemId, String itemName)
 	{
 		return resolveLookup(itemId, itemName)
-			.thenCompose(lookup ->
+			.thenCompose(lookup -> fetchResolved(itemId, itemName, lookup));
+	}
+
+	private CompletableFuture<ItemInspectInfo> fetch(ItemInspectVariant variant)
+	{
+		ItemWikiLookup lookup = new ItemWikiLookup(
+			variant.getWikiPage(),
+			variant.getWikiAnchor(),
+			variant.getSourceUrl());
+		return fetchResolved(variant.getId(), variant.getDisplayName(), lookup);
+	}
+
+	private CompletableFuture<ItemInspectInfo> fetchResolved(int itemId, String itemName, ItemWikiLookup lookup)
+	{
+		if (lookup == null)
+		{
+			return CompletableFuture.completedFuture(null);
+		}
+
+		return fetchWikiPage(lookup)
+			.thenApply(wikiPage -> parser.parse(itemId, itemName, lookup, wikiPage.wikitext, wikiPage.categories))
+			.thenCompose(info ->
 			{
-				if (lookup == null)
+				if (info == null)
 				{
 					return CompletableFuture.completedFuture(null);
 				}
-				return fetchWikiPage(lookup)
-					.thenApply(wikiPage -> parser.parse(itemId, itemName, lookup, wikiPage.wikitext, wikiPage.categories))
-					.thenCompose(info ->
-					{
-						if (info == null)
-						{
-							return CompletableFuture.completedFuture(null);
-						}
-						return cache.put(info).thenApply(ignored -> info);
-					});
+				return cache.put(info).thenApply(ignored -> info);
 			});
 	}
 
@@ -267,6 +325,84 @@ public class ItemInspectService
 			catch (IOException ex)
 			{
 				throw new IllegalStateException("Unable to read wiki bucket response", ex);
+			}
+		});
+	}
+
+	private CompletableFuture<List<ItemInspectVariant>> findVariants(String page)
+	{
+		String query = "bucket('infobox_item')"
+			+ ".select('page_name','item_id','item_name','version_anchor')"
+			+ ".where('page_name','"
+			+ bucketLiteral(page)
+			+ "').limit(50).run()";
+		HttpUrl url = wikiBase.newBuilder()
+			.addPathSegment("api.php")
+			.addQueryParameter("action", "bucket")
+			.addQueryParameter("format", "json")
+			.addQueryParameter("query", query)
+			.build();
+
+		Request request = new Request.Builder()
+			.url(url)
+			.header("User-Agent", USER_AGENT)
+			.build();
+
+		return execute(httpClient, request).thenApply(response ->
+		{
+			try (Response closeable = response; ResponseBody body = closeable.body())
+			{
+				if (body == null)
+				{
+					throw new IllegalStateException("Wiki item variant response did not include a body");
+				}
+
+				JsonObject json = gson.fromJson(body.string(), JsonObject.class);
+				JsonArray bucket = json.getAsJsonArray("bucket");
+				if (bucket == null || bucket.size() == 0)
+				{
+					return Collections.emptyList();
+				}
+
+				Map<Integer, ItemInspectVariant> variants = new LinkedHashMap<>();
+				for (JsonElement element : bucket)
+				{
+					JsonObject row = element.getAsJsonObject();
+					int itemId = firstNumericId(row, "item_id");
+					if (itemId < 0)
+					{
+						continue;
+					}
+
+					String variantPage = normalizedPageTitle(firstString(row, "page_name"));
+					if (variantPage == null)
+					{
+						variantPage = normalizedPageTitle(page);
+					}
+					String anchor = normalizedAnchor(firstString(row, "version_anchor"));
+					String displayName = firstString(row, "item_name");
+					if (displayName == null || displayName.trim().isEmpty())
+					{
+						displayName = page;
+					}
+					variants.putIfAbsent(itemId, new ItemInspectVariant(
+						itemId,
+						displayName,
+						variantPage,
+						anchor,
+						wikiUrl(variantPage, anchor)));
+				}
+
+				List<ItemInspectVariant> sorted = new ArrayList<>(variants.values());
+				sorted.sort(Comparator
+					.comparing(ItemInspectVariant::getDisplayName, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+					.thenComparing(ItemInspectVariant::getWikiAnchor, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+					.thenComparingInt(ItemInspectVariant::getId));
+				return Collections.unmodifiableList(sorted);
+			}
+			catch (IOException ex)
+			{
+				throw new IllegalStateException("Unable to read wiki item variant response", ex);
 			}
 		});
 	}
@@ -436,6 +572,58 @@ public class ItemInspectService
 			first = false;
 		}
 		return query.append(')').toString();
+	}
+
+	private static String bucketLiteral(String value)
+	{
+		return value.replace("\\", "\\\\").replace("'", "\\'");
+	}
+
+	private static int firstNumericId(JsonObject row, String key)
+	{
+		JsonElement element = row.get(key);
+		if (element == null || element.isJsonNull())
+		{
+			return -1;
+		}
+
+		if (element.isJsonArray())
+		{
+			for (JsonElement candidate : element.getAsJsonArray())
+			{
+				int id = numericId(candidate);
+				if (id >= 0)
+				{
+					return id;
+				}
+			}
+			return -1;
+		}
+
+		return numericId(element);
+	}
+
+	private static int numericId(JsonElement element)
+	{
+		if (element == null || element.isJsonNull())
+		{
+			return -1;
+		}
+
+		String value = element.getAsString();
+		if (!value.matches("\\d+"))
+		{
+			return -1;
+		}
+
+		try
+		{
+			return Integer.parseInt(value);
+		}
+		catch (NumberFormatException ignored)
+		{
+			return -1;
+		}
 	}
 
 	private static Set<Integer> requestedItemIds(JsonObject row, Set<Integer> requestedItemIds)

@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.inspect.item.ItemInspectInfo;
+import com.inspect.item.ItemInspectVariant;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemSource;
 import com.inspect.item.ItemSourceRequirement;
@@ -36,7 +37,9 @@ import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import javax.swing.JTextArea;
+import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.ui.components.IconTextField;
 import org.junit.Test;
 
 public class InspectPanelTest
@@ -108,6 +111,28 @@ public class InspectPanelTest
 	}
 
 	@Test
+	public void itemVariantPickerShowsExactIdsAndDispatchesSelectedItem() throws Exception
+	{
+		AtomicReference<ItemInspectVariant> selectedItem = new AtomicReference<>();
+		ItemInspectVariant unpoisoned = variant(1215, "Dragon dagger", "Dragon_dagger", "Unpoisoned");
+		ItemInspectVariant poisonPlusPlus = variant(5698, "Dragon dagger(p++)", "Dragon_dagger", "Poison++");
+
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.setItemVariantInspectHandler(selectedItem::set);
+			panel.showItemVariantPicker("Dragon dagger", Arrays.asList(unpoisoned, poisonPlusPlus));
+			UiSnapshot itemSnapshot = UiSnapshot.capture(panel);
+			clickButton(panel, "Dragon dagger(p++)");
+			return itemSnapshot;
+		});
+
+		assertEquals(poisonPlusPlus, selectedItem.get());
+		assertTrue(snapshot.text.contains("Choose item variant"));
+		assertTrue(snapshot.text.contains("Poison++ \u00B7 ID 5698"));
+	}
+
+	@Test
 	public void itemSearchNotFoundMessageWrapsWithinPanel() throws Exception
 	{
 		JTextArea message = onEdt(() ->
@@ -124,19 +149,23 @@ public class InspectPanelTest
 	}
 
 	@Test
-	public void clearSearchPreservesCurrentSearchTypeSelection() throws Exception
+	public void clearingSearchPreservesCurrentSearchTypeAndTab() throws Exception
 	{
-		String selectedType = onEdt(() ->
+		String searchState = onEdt(() ->
 		{
 			InspectPanel panel = new InspectPanel(null, null);
-			panel.showSearchNotFound("Item", "green dragon");
 			JComboBox<?> type = findComboBox(panel);
 			type.setSelectedItem("NPC");
-			panel.showEmpty();
-			return String.valueOf(findComboBox(panel).getSelectedItem());
+			findIconTextField(panel).setText("green dragon");
+			clickButton(panel, "\u00D7");
+
+			String selectedType = String.valueOf(findComboBox(panel).getSelectedItem());
+			boolean npcTabActive = ColorScheme.BRAND_ORANGE.equals(findButton(panel, "NPC").getForeground());
+			boolean itemTabActive = ColorScheme.BRAND_ORANGE.equals(findButton(panel, "Item").getForeground());
+			return selectedType + "," + npcTabActive + "," + itemTabActive;
 		});
 
-		assertEquals("NPC", selectedType);
+		assertEquals("NPC,true,false", searchState);
 	}
 
 	@Test
@@ -852,6 +881,11 @@ public class InspectPanelTest
 		button.doClick();
 	}
 
+	private static ItemInspectVariant variant(int id, String name, String page, String anchor)
+	{
+		return new ItemInspectVariant(id, name, page, anchor, "https://wiki.test/w/" + page);
+	}
+
 	private static void clickPopupAction(Component root, String text)
 	{
 		AbstractButton button = findPopupAction(root, text);
@@ -944,6 +978,25 @@ public class InspectPanelTest
 			}
 		}
 		throw new AssertionError("Combo box not found");
+	}
+
+	private static IconTextField findIconTextField(Component root)
+	{
+		Deque<Component> components = new ArrayDeque<>();
+		components.add(root);
+		while (!components.isEmpty())
+		{
+			Component component = components.removeFirst();
+			if (component instanceof IconTextField)
+			{
+				return (IconTextField) component;
+			}
+			if (component instanceof Container)
+			{
+				Collections.addAll(components, ((Container) component).getComponents());
+			}
+		}
+		throw new AssertionError("Search field not found");
 	}
 
 	private static ItemInspectInfo scrollableItem(String name)

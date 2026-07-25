@@ -8,6 +8,7 @@ Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the
 
 - **Item inspect**: inspect item widgets or search items from the sidebar.
 - **NPC inspect**: inspect NPCs or search NPCs from the sidebar.
+- **Exact item variant picker**: choose a specific item version by wiki anchor and game ID when a search page contains multiple variants.
 - **Player inspect**: inspect visible player equipment from client-side player composition data.
 - **Recent inspections**: return to recent item, NPC, and player inspections from the sidebar.
 - **Equipment recommendations**: rank owned bank/equipped gear for inspected NPC weaknesses.
@@ -23,6 +24,8 @@ Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the
 ## Item Inspect
 
 Item inspect shows wiki-backed item details, prices, requirements, sources, gear-role tags, bonuses, and comparison details where available.
+
+Searches for multi-version items show each exact variant with its item icon, version anchor, and game ID. Searches that already name a unique variant, such as `Dragon dagger(p++)`, open that variant directly.
 
 The Sources section expands item acquisition into readable categories such as shops, monsters, skilling, quests, and clue-related sources.
 
@@ -79,7 +82,7 @@ The Recent tab keeps short clickable lists for returning to item, NPC, and playe
 
 Enhanced uses OSRS Wiki lookups only when the wiki lookup config is enabled. Wiki responses are cached under the RuneLite directory for the configured cache duration.
 
-NPC and item search results are served from the local Inspect cache when a matching cached entry is still fresh.
+NPC and item search results, including item variant choices, are served from the local Inspect cache when a matching cached entry is still fresh.
 
 Player inspect uses locally visible client data only. It does not expose player information over HTTP.
 
