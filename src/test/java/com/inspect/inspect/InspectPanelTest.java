@@ -8,6 +8,9 @@ import com.inspect.item.ItemInspectInfo;
 import com.inspect.item.ItemInspectVariant;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemSource;
+import com.inspect.item.ItemSourceAccountMode;
+import com.inspect.item.ItemSourceReadiness;
+import com.inspect.item.ItemSourceReadinessEvaluator;
 import com.inspect.item.ItemSourceRequirement;
 import com.inspect.npc.EquipmentRecommendation;
 import com.inspect.npc.NpcCombatInfo;
@@ -24,6 +27,7 @@ import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -37,6 +41,9 @@ import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import javax.swing.JTextArea;
+import net.runelite.api.Quest;
+import net.runelite.api.QuestState;
+import net.runelite.api.Skill;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.ui.components.IconTextField;
@@ -265,47 +272,6 @@ public class InspectPanelTest
 		int y = onEdt(() -> scrollPane.get().getViewport().getViewPosition().y);
 
 		assertEquals(0, y);
-	}
-
-	@Test
-	public void itemInfoRefreshPreservesScrollPosition() throws Exception
-	{
-		AtomicReference<JScrollPane> scrollPane = new AtomicReference<>();
-		AtomicReference<String> text = new AtomicReference<>();
-
-		onEdt(() ->
-		{
-			InspectPanel panel = new InspectPanel(null, null);
-			JScrollPane pane = new JScrollPane(panel);
-			pane.setSize(new Dimension(PluginPanel.PANEL_WIDTH, 120));
-			panel.showItemInfo(scrollableItem("Rune platebody"), null, null, null);
-			pane.doLayout();
-			panel.doLayout();
-			scrollPane.set(pane);
-			return null;
-		});
-		onEdt(() -> null);
-
-		onEdt(() ->
-		{
-			InspectPanel panel = (InspectPanel) scrollPane.get().getViewport().getView();
-			ItemRequirementSummary requirements = new ItemRequirementSummary(
-				Collections.singletonList("Defence 40 (81)"),
-				Collections.emptyList()
-			);
-			scrollPane.get().getViewport().setViewPosition(new Point(0, 300));
-			assertTrue(scrollPane.get().getViewport().getViewPosition().y > 0);
-
-			panel.refreshItemInfo(scrollableItem("Rune platebody"), null, requirements, null);
-			text.set(UiSnapshot.capture(panel).text);
-			return null;
-		});
-		onEdt(() -> null);
-
-		int y = onEdt(() -> scrollPane.get().getViewport().getViewPosition().y);
-
-		assertTrue(y > 0);
-		assertTrue(text.get().contains("Defence 40 (81)"));
 	}
 
 	@Test
@@ -562,6 +528,68 @@ public class InspectPanelTest
 	}
 
 	@Test
+	public void npcRequirementRefreshPreservesScrollPosition() throws Exception
+	{
+		AtomicReference<JScrollPane> scrollPane = new AtomicReference<>();
+
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			JScrollPane pane = new JScrollPane(panel);
+			pane.setSize(new Dimension(PluginPanel.PANEL_WIDTH, 120));
+			NpcItemRequirement requirement = new NpcItemRequirement(
+				"Rock hammer",
+				Collections.singletonList("Rock hammer"));
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Gargoyle")
+				.combatLevel("111")
+				.hitpoints("105")
+				.attack("120")
+				.strength("110")
+				.defence("100")
+				.magic("1")
+				.ranged("1")
+				.itemRequirements(Collections.singletonList(requirement))
+				.build();
+			NpcItemRequirementStatus missing = new NpcItemRequirementStatus(
+				requirement,
+				Collections.singletonList(new NpcItemRequirementAlternativeStatus("Rock hammer", false, null)));
+			panel.showInfo(
+				info,
+				EquipmentRecommendation.preview(info),
+				null,
+				Collections.singletonList(missing));
+			pane.doLayout();
+			panel.doLayout();
+			pane.getViewport().setViewPosition(new Point(0, 300));
+			assertTrue(pane.getViewport().getViewPosition().y > 0);
+
+			NpcItemRequirementStatus carried = new NpcItemRequirementStatus(
+				requirement,
+				Collections.singletonList(new NpcItemRequirementAlternativeStatus(
+					"Rock hammer",
+					true,
+					"Rock hammer")));
+			panel.refreshNpcInfo(
+				info,
+				EquipmentRecommendation.preview(info),
+				null,
+				Collections.singletonList(carried),
+				Collections.emptyMap());
+			scrollPane.set(pane);
+			return null;
+		});
+		onEdt(() -> null);
+
+		int y = onEdt(() -> scrollPane.get().getViewport().getViewPosition().y);
+		String text = onEdt(() -> UiSnapshot.capture(
+			(InspectPanel) scrollPane.get().getViewport().getView()).text);
+
+		assertTrue(y > 0);
+		assertFalse(text.contains("Missing"));
+	}
+
+	@Test
 	public void unresolvedNpcDropRowsRenderWithoutInspectPopup() throws Exception
 	{
 		UiSnapshot snapshot = onEdt(() ->
@@ -690,6 +718,52 @@ public class InspectPanelTest
 		assertTrue(snapshot.text.indexOf("Sources") < snapshot.text.indexOf("Examine"));
 		assertFalse(snapshot.text.contains("How to get"));
 		assertFalse(snapshot.text.contains("Unlock notes"));
+	}
+
+	@Test
+	public void rendersAccountAwareSourceStatusInIronmanPriorityOrder() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			ItemSource trading = new ItemSource(
+				"Trading",
+				Collections.singletonList("Purchased from the Grand Exchange."),
+				Collections.emptyList());
+			ItemSource skilling = new ItemSource(
+				"Skilling",
+				Collections.singletonList("Created with level 99 Smithing."),
+				Collections.singletonList(new ItemSourceRequirement("Smithing", 99, "Skilling")));
+			ItemSource quests = new ItemSource(
+				"Quests",
+				Collections.singletonList("Received as a reward after completing the Lost City quest."),
+				Collections.emptyList());
+			ItemInspectInfo item = ItemInspectInfo.builder()
+				.itemId(1215)
+				.displayName("Dragon dagger")
+				.sourcePlan(Arrays.asList(trading, skilling, quests))
+				.build();
+			Map<Skill, Integer> skillLevels = new EnumMap<>(Skill.class);
+			skillLevels.put(Skill.SMITHING, 80);
+			Map<Quest, QuestState> questStates = new EnumMap<>(Quest.class);
+			questStates.put(Quest.LOST_CITY, QuestState.FINISHED);
+			ItemSourceReadiness readiness = ItemSourceReadinessEvaluator.evaluate(
+				item.getSourcePlan(),
+				skillLevels,
+				questStates,
+				ItemSourceAccountMode.IRONMAN);
+
+			panel.showItemInfo(item, null, null, null, readiness);
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains(
+			"Ironman account: available methods with met requirements are shown first."));
+		assertTrue(snapshot.text.contains("Lost City quest"));
+		assertTrue(snapshot.text.contains("Smithing 99 (80)"));
+		assertTrue(snapshot.text.contains("Not available to Ironman accounts"));
+		assertTrue(snapshot.text.indexOf("Quests") < snapshot.text.indexOf("Skilling"));
+		assertTrue(snapshot.text.indexOf("Skilling") < snapshot.text.indexOf("Trading"));
 	}
 
 	@Test
