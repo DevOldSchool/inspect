@@ -10,7 +10,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -23,6 +26,7 @@ import lombok.extern.slf4j.Slf4j;
 class ItemInspectCache
 {
 	private static final String INDEX_FILE = "index.json";
+	private static final String VARIANT_FILE = "variants.json";
 
 	private final Gson gson;
 	private final Path cacheDirectory;
@@ -34,6 +38,8 @@ class ItemInspectCache
 	});
 	private final Map<Integer, ItemInspectInfo> memoryCache = new HashMap<>();
 	private final Map<Integer, String> cacheKeysByItem = new HashMap<>();
+	private final Map<String, ItemInspectVariantCacheEntry> variantsBySearchTerm = new HashMap<>();
+	private boolean variantsLoaded;
 
 	ItemInspectCache(Gson gson, Path cacheDirectory)
 	{
@@ -55,6 +61,7 @@ class ItemInspectCache
 	{
 		memoryCache.clear();
 		cacheKeysByItem.clear();
+		variantsBySearchTerm.clear();
 		executor.shutdownNow();
 	}
 
@@ -109,12 +116,63 @@ class ItemInspectCache
 		return CompletableFuture.runAsync(() -> writeToDisk(info), executor);
 	}
 
+	CompletableFuture<Optional<List<ItemInspectVariant>>> getVariants(
+		String searchTerm,
+		long nowEpochSecond,
+		int ttlDays)
+	{
+		String normalizedSearchTerm = normalizeSearchTerm(searchTerm);
+		if (normalizedSearchTerm.isEmpty())
+		{
+			return CompletableFuture.completedFuture(Optional.empty());
+		}
+
+		synchronized (this)
+		{
+			ItemInspectVariantCacheEntry cached = variantsBySearchTerm.get(normalizedSearchTerm);
+			if (cached != null && !cached.isExpired(nowEpochSecond, ttlDays))
+			{
+				return CompletableFuture.completedFuture(Optional.of(copyVariants(cached.getVariants())));
+			}
+		}
+
+		return CompletableFuture.supplyAsync(
+			() -> readVariants(normalizedSearchTerm, nowEpochSecond, ttlDays),
+			executor);
+	}
+
+	CompletableFuture<Void> putVariants(
+		String searchTerm,
+		List<ItemInspectVariant> variants,
+		long fetchedAtEpochSecond)
+	{
+		String normalizedSearchTerm = normalizeSearchTerm(searchTerm);
+		if (normalizedSearchTerm.isEmpty())
+		{
+			return CompletableFuture.completedFuture(null);
+		}
+
+		ItemInspectVariantCacheEntry entry = new ItemInspectVariantCacheEntry(
+			normalizedSearchTerm,
+			fetchedAtEpochSecond,
+			copyVariants(variants));
+		synchronized (this)
+		{
+			variantsBySearchTerm.put(normalizedSearchTerm, entry);
+			variantsLoaded = true;
+		}
+
+		return CompletableFuture.runAsync(this::writeVariants, executor);
+	}
+
 	CompletableFuture<Void> clearAsync()
 	{
 		synchronized (this)
 		{
 			memoryCache.clear();
 			cacheKeysByItem.clear();
+			variantsBySearchTerm.clear();
+			variantsLoaded = true;
 		}
 
 		return CompletableFuture.runAsync(() ->
@@ -136,6 +194,40 @@ class ItemInspectCache
 				log.debug("Unable to clear Item Inspect cache", ex);
 			}
 		}, executor);
+	}
+
+	private Optional<List<ItemInspectVariant>> readVariants(
+		String normalizedSearchTerm,
+		long nowEpochSecond,
+		int ttlDays)
+	{
+		try
+		{
+			Files.createDirectories(cacheDirectory);
+			loadVariantsIfNeeded();
+
+			ItemInspectVariantCacheEntry cached;
+			synchronized (this)
+			{
+				cached = variantsBySearchTerm.get(normalizedSearchTerm);
+				if (cached == null)
+				{
+					return Optional.empty();
+				}
+				if (!cached.isExpired(nowEpochSecond, ttlDays))
+				{
+					return Optional.of(copyVariants(cached.getVariants()));
+				}
+				variantsBySearchTerm.remove(normalizedSearchTerm);
+			}
+
+			writeVariants();
+		}
+		catch (IOException ex)
+		{
+			log.debug("Unable to read Item Inspect variant cache", ex);
+		}
+		return Optional.empty();
 	}
 
 	private Optional<ItemInspectInfo> readFromDisk(int itemId, long nowEpochSecond, int ttlDays)
@@ -249,6 +341,94 @@ class ItemInspectCache
 		}
 	}
 
+	private void loadVariantsIfNeeded() throws IOException
+	{
+		synchronized (this)
+		{
+			if (variantsLoaded)
+			{
+				return;
+			}
+		}
+
+		Path variantsFile = cacheDirectory.resolve(VARIANT_FILE);
+		if (!Files.isRegularFile(variantsFile))
+		{
+			synchronized (this)
+			{
+				variantsLoaded = true;
+			}
+			return;
+		}
+
+		Map<String, ItemInspectVariantCacheEntry> loadedVariants = new HashMap<>();
+		try (Reader reader = Files.newBufferedReader(variantsFile, StandardCharsets.UTF_8))
+		{
+			JsonObject variants = gson.fromJson(reader, JsonObject.class);
+			if (variants != null)
+			{
+				for (Map.Entry<String, JsonElement> entry : variants.entrySet())
+				{
+					ItemInspectVariantCacheEntry cached = gson.fromJson(
+						entry.getValue(),
+						ItemInspectVariantCacheEntry.class);
+					if (!isValidVariantEntry(entry.getKey(), cached))
+					{
+						throw new IllegalArgumentException("Invalid Item Inspect variant cache entry");
+					}
+					loadedVariants.put(entry.getKey(), cached);
+				}
+			}
+
+			synchronized (this)
+			{
+				if (!variantsLoaded)
+				{
+					variantsBySearchTerm.putAll(loadedVariants);
+					variantsLoaded = true;
+				}
+			}
+		}
+		catch (RuntimeException ex)
+		{
+			log.debug("Ignoring corrupt Item Inspect variant cache", ex);
+			Files.deleteIfExists(variantsFile);
+			synchronized (this)
+			{
+				variantsBySearchTerm.clear();
+				variantsLoaded = true;
+			}
+		}
+	}
+
+	private void writeVariants()
+	{
+		try
+		{
+			Files.createDirectories(cacheDirectory);
+			Map<String, ItemInspectVariantCacheEntry> variants;
+			synchronized (this)
+			{
+				variants = new HashMap<>(variantsBySearchTerm);
+			}
+
+			Path tempFile = cacheDirectory.resolve(VARIANT_FILE + ".tmp");
+			try (Writer writer = Files.newBufferedWriter(tempFile, StandardCharsets.UTF_8))
+			{
+				gson.toJson(variants, writer);
+			}
+			Files.move(
+				tempFile,
+				cacheDirectory.resolve(VARIANT_FILE),
+				StandardCopyOption.REPLACE_EXISTING,
+				StandardCopyOption.ATOMIC_MOVE);
+		}
+		catch (IOException ex)
+		{
+			log.debug("Unable to write Item Inspect variant cache", ex);
+		}
+	}
+
 	private void loadIndexIfNeeded() throws IOException
 	{
 		synchronized (this)
@@ -336,6 +516,43 @@ class ItemInspectCache
 	private static boolean isValidCacheKey(String cacheKey)
 	{
 		return cacheKey != null && !cacheKey.isEmpty() && cacheKey.matches("[A-Za-z0-9._-]+");
+	}
+
+	private static boolean isValidVariantEntry(String searchTerm, ItemInspectVariantCacheEntry entry)
+	{
+		if (entry == null
+			|| searchTerm == null
+			|| searchTerm.isEmpty()
+			|| !searchTerm.equals(entry.getNormalizedSearchTerm())
+			|| !searchTerm.equals(normalizeSearchTerm(searchTerm))
+			|| entry.getFetchedAtEpochSecond() < 0
+			|| entry.getVariants() == null)
+		{
+			return false;
+		}
+
+		for (ItemInspectVariant variant : entry.getVariants())
+		{
+			if (variant == null
+				|| variant.getId() < 0
+				|| variant.getDisplayName() == null
+				|| variant.getDisplayName().trim().isEmpty()
+				|| variant.getWikiPage() == null
+				|| variant.getWikiPage().trim().isEmpty()
+				|| variant.getSourceUrl() == null
+				|| variant.getSourceUrl().trim().isEmpty())
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static List<ItemInspectVariant> copyVariants(List<ItemInspectVariant> variants)
+	{
+		return variants == null
+			? Collections.emptyList()
+			: Collections.unmodifiableList(new ArrayList<>(variants));
 	}
 
 	private static boolean matchesSearchTerm(ItemInspectInfo info, String normalizedSearchTerm)

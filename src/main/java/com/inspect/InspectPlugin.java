@@ -1,6 +1,8 @@
 package com.inspect;
 
 import com.inspect.item.ItemInspectInfo;
+import com.inspect.item.ItemInspectVariant;
+import com.inspect.item.ItemInspectVariantSelector;
 import com.inspect.item.ItemPriceSummary;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemInspectService;
@@ -147,6 +149,7 @@ public class InspectPlugin extends Plugin
 		inspectPanel = injector.getInstance(InspectPanel.class);
 		inspectPanel.setPinnedInspects(pinnedInspectState);
 		inspectPanel.setSearchHandler(this::searchInspect);
+		inspectPanel.setItemVariantInspectHandler(this::inspectItemVariant);
 		inspectPanel.setItemInspectHandler(this::inspectPlayerEquipmentItem);
 		inspectPanel.setPinnedInspectHandler(new InspectPanel.PinnedInspectHandler()
 		{
@@ -961,9 +964,53 @@ public class InspectPlugin extends Plugin
 			return;
 		}
 
+		searchItemVariants(lookupQuery);
+	}
+
+	private void searchItemVariants(String query)
+	{
+		itemInspectService.searchVariants(query, config.npcInspectCacheTtlDays())
+			.whenComplete((variants, throwable) ->
+			{
+				if (throwable != null)
+				{
+					log.debug("Item Inspect variant search failed for {}", query, throwable);
+					SwingUtilities.invokeLater(() -> inspectPanel.showSearchError("Item", query));
+					return;
+				}
+
+				if (variants == null || variants.isEmpty())
+				{
+					clientThread.invokeLater(() -> renderItemLookup(
+						itemInspectService.search(query, config.npcInspectCacheTtlDays()),
+						query,
+						snapshotEquippedItems(),
+						true));
+					return;
+				}
+
+				ItemInspectVariant exact = ItemInspectVariantSelector.exactMatch(query, variants);
+				if (exact != null)
+				{
+					inspectItemVariant(exact);
+					return;
+				}
+
+				SwingUtilities.invokeLater(() -> inspectPanel.showItemVariantPicker(query, variants));
+			});
+	}
+
+	private void inspectItemVariant(ItemInspectVariant variant)
+	{
+		if (variant == null)
+		{
+			return;
+		}
+
+		SwingUtilities.invokeLater(() -> inspectPanel.showSearchLoading("Item", variant.getDisplayName()));
 		clientThread.invokeLater(() -> renderItemLookup(
-			itemInspectService.search(lookupQuery, config.npcInspectCacheTtlDays()),
-			lookupQuery,
+			itemInspectService.inspect(variant, config.npcInspectCacheTtlDays()),
+			variant.getDisplayName(),
 			snapshotEquippedItems(),
 			true));
 	}
