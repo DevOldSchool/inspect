@@ -36,12 +36,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.EnumMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
@@ -65,6 +63,7 @@ import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOpened;
+import net.runelite.api.events.MenuOptionClicked;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
@@ -77,6 +76,7 @@ import net.runelite.client.callback.ClientThread;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.menus.MenuManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
@@ -128,17 +128,18 @@ public class InspectPlugin extends Plugin
 	@Inject
 	private OverlayManager overlayManager;
 
+	@Inject
+	private MenuManager menuManager;
+
 	private NavigationButton inspectNavButton;
 	private InspectPanel inspectPanel;
 	private MenuMarker lastNpcInspectMenu = MenuMarker.empty();
 	private MenuMarker lastItemInspectMenu = MenuMarker.empty();
-	private MenuMarker lastPlayerInspectMenu = MenuMarker.empty();
 	private NpcCombatInfo currentNpcInfo;
 	private EquipmentRecommendation currentNpcRecommendation;
 	private String currentNpcRecommendationMessage;
 	private Map<String, Integer> currentNpcDropItemIds = Collections.emptyMap();
 	private PinnedInspectState pinnedInspectState = PinnedInspectState.empty();
-	private final Set<String> playerInspectTargetsThisTick = new HashSet<>();
 	private final Deque<String> recentNpcInspects = new ArrayDeque<>();
 	private final Deque<String> recentPlayerInspects = new ArrayDeque<>();
 	private final Deque<RecentInspectEntry> recentItemInspects = new ArrayDeque<>();
@@ -277,12 +278,14 @@ public class InspectPlugin extends Plugin
 		overlayManager.add(bankEquipmentOverlay);
 		npcInspectService.startUp(config.clearNpcInspectCacheOnStartup());
 		itemInspectService.startUp(config.clearNpcInspectCacheOnStartup());
+		addPlayerInspectMenuOptionIfEnabled();
 		log.debug("Inspect plugin started");
 	}
 
 	@Override
 	protected void shutDown()
 	{
+		menuManager.removePlayerMenuItem(PLAYER_INSPECT);
 		clientToolbar.removeNavigation(inspectNavButton);
 		overlayManager.remove(bankEquipmentOverlay);
 		bankEquipmentOverlay.clear();
@@ -393,7 +396,18 @@ public class InspectPlugin extends Plugin
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
-		if (CONFIG_GROUP.equals(event.getGroup()) && "clearNpcInspectCacheOnStartup".equals(event.getKey()) && config.clearNpcInspectCacheOnStartup())
+		if (!CONFIG_GROUP.equals(event.getGroup()))
+		{
+			return;
+		}
+
+		if ("showPlayerEquipmentInspectOption".equals(event.getKey()))
+		{
+			menuManager.removePlayerMenuItem(PLAYER_INSPECT);
+			addPlayerInspectMenuOptionIfEnabled();
+		}
+
+		if ("clearNpcInspectCacheOnStartup".equals(event.getKey()) && config.clearNpcInspectCacheOnStartup())
 		{
 			npcInspectService.clearCacheAsync();
 			itemInspectService.clearCacheAsync();
@@ -426,16 +440,30 @@ public class InspectPlugin extends Plugin
 			return;
 		}
 
-		if (isPlayerMenuAction(event.getType()))
-		{
-			addPlayerEquipmentInspectEntry(event);
-			return;
-		}
-
 		if (isItemMenuAction(event.getType()))
 		{
 			addItemInspectEntry(event);
 			return;
+		}
+	}
+
+	@Subscribe
+	public void onMenuOptionClicked(MenuOptionClicked event)
+	{
+		if (!config.showPlayerEquipmentInspectOption()
+			|| !isPlayerInspectMenuClick(event.getMenuAction(), event.getMenuOption()))
+		{
+			return;
+		}
+
+		inspectPlayerEquipment(event.getMenuEntry().getPlayer());
+	}
+
+	private void addPlayerInspectMenuOptionIfEnabled()
+	{
+		if (config.showPlayerEquipmentInspectOption())
+		{
+			menuManager.addPlayerMenuItem(PLAYER_INSPECT);
 		}
 	}
 
@@ -558,53 +586,15 @@ public class InspectPlugin extends Plugin
 		return lastItemInspectMenu.matches(event);
 	}
 
-	private void addPlayerEquipmentInspectEntry(MenuEntryAdded event)
-	{
-		Player player = event.getMenuEntry().getPlayer();
-		if (player == null || player.getName() == null || player.getPlayerComposition() == null)
-		{
-			return;
-		}
-
-		String playerName = Text.removeTags(player.getName());
-		if (!config.showPlayerEquipmentInspectOption() || alreadyAddedPlayerInspectFor(event, playerName) || menuAlreadyHasPlayerEquipmentInspect(event.getTarget()))
-		{
-			return;
-		}
-
-		client.getMenu().createMenuEntry(-1)
-			.setOption(PLAYER_INSPECT)
-			.setTarget(event.getTarget())
-			.setType(MenuAction.RUNELITE)
-			.onClick(menuEntry -> inspectPlayerEquipment(player));
-
-		lastPlayerInspectMenu = MenuMarker.ofPlayer(event);
-		playerInspectTargetsThisTick.add(playerName.toLowerCase(Locale.ENGLISH));
-	}
-
-	private boolean alreadyAddedPlayerInspectFor(MenuEntryAdded event, String playerName)
-	{
-		return playerInspectTargetsThisTick.contains(playerName.toLowerCase(Locale.ENGLISH)) || lastPlayerInspectMenu.matches(event);
-	}
-
-	private boolean menuAlreadyHasPlayerEquipmentInspect(String target)
-	{
-		for (net.runelite.api.MenuEntry entry : client.getMenu().getMenuEntries())
-		{
-			if (PLAYER_INSPECT.equals(entry.getOption()) && target.equals(entry.getTarget()))
-			{
-				return true;
-			}
-		}
-		return false;
-	}
-
 	private void resetInspectMenuMarker()
 	{
 		lastNpcInspectMenu = MenuMarker.empty();
 		lastItemInspectMenu = MenuMarker.empty();
-		lastPlayerInspectMenu = MenuMarker.empty();
-		playerInspectTargetsThisTick.clear();
+	}
+
+	static boolean isPlayerInspectMenuClick(MenuAction action, String option)
+	{
+		return action == MenuAction.RUNELITE_PLAYER && PLAYER_INSPECT.equals(option);
 	}
 
 	private static void addRecent(Deque<String> recentInspects, String label)
@@ -757,7 +747,7 @@ public class InspectPlugin extends Plugin
 
 	private void inspectPlayerEquipment(Player player)
 	{
-		if (player == null || player.getPlayerComposition() == null)
+		if (player == null || player.getName() == null || player.getPlayerComposition() == null)
 		{
 			return;
 		}
@@ -2128,18 +2118,6 @@ public class InspectPlugin extends Plugin
 			|| type == MenuAction.EXAMINE_NPC.getId();
 	}
 
-	private static boolean isPlayerMenuAction(int type)
-	{
-		return type == MenuAction.PLAYER_FIRST_OPTION.getId()
-			|| type == MenuAction.PLAYER_SECOND_OPTION.getId()
-			|| type == MenuAction.PLAYER_THIRD_OPTION.getId()
-			|| type == MenuAction.PLAYER_FOURTH_OPTION.getId()
-			|| type == MenuAction.PLAYER_FIFTH_OPTION.getId()
-			|| type == MenuAction.PLAYER_SIXTH_OPTION.getId()
-			|| type == MenuAction.PLAYER_SEVENTH_OPTION.getId()
-			|| type == MenuAction.PLAYER_EIGHTH_OPTION.getId();
-	}
-
 	private static boolean isItemMenuAction(int type)
 	{
 		return type == MenuAction.CC_OP.getId()
@@ -2252,11 +2230,6 @@ public class InspectPlugin extends Plugin
 		private static MenuMarker ofItem(MenuEntryAdded event)
 		{
 			return new MenuMarker(event.getActionParam0(), event.getActionParam1(), Integer.MIN_VALUE, event.getItemId(), false);
-		}
-
-		private static MenuMarker ofPlayer(MenuEntryAdded event)
-		{
-			return new MenuMarker(event.getActionParam0(), event.getActionParam1(), event.getIdentifier(), event.getItemId(), true);
 		}
 
 		private boolean matches(MenuEntryAdded event)
