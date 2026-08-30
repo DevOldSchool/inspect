@@ -44,6 +44,7 @@ import javax.swing.JTextArea;
 import net.runelite.api.Quest;
 import net.runelite.api.QuestState;
 import net.runelite.api.Skill;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.ui.components.IconTextField;
@@ -825,6 +826,45 @@ public class InspectPanelTest
 		assertTrue(snapshot.text.contains("+45000"));
 		assertTrue(snapshot.text.contains("Different"));
 		assertTrue(snapshot.text.contains("Weapon"));
+	}
+
+	@Test
+	public void formatsElementalWeaknessAsPercentage()
+	{
+		assertEquals("40%", InspectPanel.elementalWeaknessPercentage("40"));
+		assertEquals("40%", InspectPanel.elementalWeaknessPercentage("40%"));
+		assertEquals(null, InspectPanel.elementalWeaknessPercentage("No elemental weakness"));
+	}
+
+	@Test
+	public void selectsRuneIconForElementalWeaknessType()
+	{
+		assertEquals(ItemID.AIRRUNE, InspectPanel.elementalWeaknessRune("air"));
+		assertEquals(ItemID.WATERRUNE, InspectPanel.elementalWeaknessRune("Water"));
+		assertEquals(ItemID.EARTHRUNE, InspectPanel.elementalWeaknessRune("EARTH"));
+		assertEquals(ItemID.FIRERUNE, InspectPanel.elementalWeaknessRune("fire"));
+		assertEquals(ItemID.BLANKRUNE_HIGH, InspectPanel.elementalWeaknessRune("unknown"));
+	}
+
+	@Test
+	public void rendersElementalWeaknessTypeAndPercentageInNpcSummary() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Lesser demon")
+				.elementalWeaknessType("water")
+				.elementalWeakness("40")
+				.build();
+
+			panel.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.emptyList());
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Weakness summary"));
+		assertTrue(snapshot.text.contains("Elemental weakness"));
+		assertTrue(snapshot.text.contains("Water 40% weakness"));
 	}
 
 	@Test

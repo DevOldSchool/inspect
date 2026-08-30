@@ -27,6 +27,17 @@ public class InspectPluginDropItemIdTest
 		assertEquals(ItemID.WHITE_LILY_SEED, InspectPlugin.dropItemIdFallback("White lily seed"));
 		assertEquals(ItemID.KONAR_KEY, InspectPlugin.dropItemIdFallback(" Brimstone key "));
 		assertEquals(ItemID.SLAYER_ROOF_KEY, InspectPlugin.dropItemIdFallback("brittle key"));
+		assertEquals(ItemID.ACNE_POTION, InspectPlugin.dropItemIdFallback("Potion (Apothecary)"));
+		assertEquals(ItemID.CHAMPIONS_CHALLENGE_EARTHWARRIOR, InspectPlugin.dropItemIdFallback("Earth warrior champion scroll"));
+		assertEquals(ItemID.CHAMPIONS_CHALLENGE_GHOUL, InspectPlugin.dropItemIdFallback("Ghoul champion scroll"));
+		assertEquals(ItemID.CHAMPIONS_CHALLENGE_GIANT, InspectPlugin.dropItemIdFallback("Giant champion scroll"));
+		assertEquals(ItemID.CHAMPIONS_CHALLENGE_GOBLIN, InspectPlugin.dropItemIdFallback("Goblin champion scroll"));
+		assertEquals(ItemID.CHAMPIONS_CHALLENGE_HOBGOBLIN, InspectPlugin.dropItemIdFallback("Hobgoblin champion scroll"));
+		assertEquals(ItemID.CHAMPIONS_CHALLENGE_IMP, InspectPlugin.dropItemIdFallback("Imp champion scroll"));
+		assertEquals(ItemID.CHAMPIONS_CHALLENGE_JOGRE, InspectPlugin.dropItemIdFallback("Jogre champion scroll"));
+		assertEquals(ItemID.CHAMPIONS_CHALLENGE_LESSERDEMON, InspectPlugin.dropItemIdFallback("Lesser demon champion scroll"));
+		assertEquals(ItemID.CHAMPIONS_CHALLENGE_SKELETON, InspectPlugin.dropItemIdFallback("Skeleton champion scroll"));
+		assertEquals(ItemID.CHAMPIONS_CHALLENGE_ZOMBIE, InspectPlugin.dropItemIdFallback("Zombie champion scroll"));
 		assertEquals(-1, InspectPlugin.dropItemIdFallback("Unknown key"));
 	}
 

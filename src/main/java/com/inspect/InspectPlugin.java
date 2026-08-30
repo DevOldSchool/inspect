@@ -1355,7 +1355,14 @@ public class InspectPlugin extends Plugin
 
 	static int dropItemIdFallback(String itemName)
 	{
-		switch (normalizeItemName(itemName))
+		String normalizedItemName = normalizeItemName(itemName);
+		int championScrollItemId = championScrollItemId(normalizedItemName);
+		if (championScrollItemId > 0)
+		{
+			return championScrollItemId;
+		}
+
+		switch (normalizedItemName)
 		{
 			case "coins":
 				return ItemID.COINS;
@@ -1383,6 +1390,37 @@ public class InspectPlugin extends Plugin
 				return ItemID.KONAR_KEY;
 			case "brittle key":
 				return ItemID.SLAYER_ROOF_KEY;
+			case "potion (apothecary)":
+				return ItemID.ACNE_POTION;
+			default:
+				return -1;
+		}
+	}
+
+	private static int championScrollItemId(String normalizedItemName)
+	{
+		switch (normalizedItemName)
+		{
+			case "earth warrior champion scroll":
+				return ItemID.CHAMPIONS_CHALLENGE_EARTHWARRIOR;
+			case "ghoul champion scroll":
+				return ItemID.CHAMPIONS_CHALLENGE_GHOUL;
+			case "giant champion scroll":
+				return ItemID.CHAMPIONS_CHALLENGE_GIANT;
+			case "goblin champion scroll":
+				return ItemID.CHAMPIONS_CHALLENGE_GOBLIN;
+			case "hobgoblin champion scroll":
+				return ItemID.CHAMPIONS_CHALLENGE_HOBGOBLIN;
+			case "imp champion scroll":
+				return ItemID.CHAMPIONS_CHALLENGE_IMP;
+			case "jogre champion scroll":
+				return ItemID.CHAMPIONS_CHALLENGE_JOGRE;
+			case "lesser demon champion scroll":
+				return ItemID.CHAMPIONS_CHALLENGE_LESSERDEMON;
+			case "skeleton champion scroll":
+				return ItemID.CHAMPIONS_CHALLENGE_SKELETON;
+			case "zombie champion scroll":
+				return ItemID.CHAMPIONS_CHALLENGE_ZOMBIE;
 			default:
 				return -1;
 		}
