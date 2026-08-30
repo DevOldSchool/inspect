@@ -482,9 +482,11 @@ public class InspectPanel extends PluginPanel
 		}, 3));
 
 		addFullWidth(section("Magic defence"));
+		String elementalWeakness = elementalWeaknessPercentage(info.getElementalWeakness());
 		addFullWidth(grid(new StatCell[]{
 			iconCell("Magic defence", "magic-defence.png", info.getMagicDefence()),
-			itemCell("Elemental weakness", ItemID.BLANKRUNE_HIGH, info.getElementalWeakness())
+			itemCell("Elemental weakness", elementalWeaknessRune(info.getElementalWeaknessType()),
+				elementalWeakness == null ? info.getElementalWeakness() : elementalWeakness)
 		}, 2));
 
 		addFullWidth(section("Ranged defence"));
@@ -785,9 +787,10 @@ public class InspectPanel extends PluginPanel
 			rows.add(row("Based on", recommendation.getDefenceLabel()));
 			rows.add(row("Why", weaknessBreakdown(info)));
 		}
-		if (info.getElementalWeakness() != null)
+		String elementalWeakness = elementalWeaknessSummary(info);
+		if (elementalWeakness != null)
 		{
-			rows.add(row("Elemental", info.getElementalWeakness()));
+			rows.add(row("Elemental weakness", elementalWeakness));
 		}
 		if (rows.isEmpty())
 		{
@@ -1843,6 +1846,57 @@ public class InspectPanel extends PluginPanel
 		addWeaknessPart(parts, "Magic", info.getMagicDefence());
 		addWeaknessPart(parts, "Ranged", lowestValue(info.getLightRangedDefence(), info.getStandardRangedDefence(), info.getHeavyRangedDefence()));
 		return parts.isEmpty() ? null : String.join(", ", parts);
+	}
+
+	private static String elementalWeaknessSummary(NpcCombatInfo info)
+	{
+		String percentage = elementalWeaknessPercentage(info.getElementalWeakness());
+		if (percentage == null)
+		{
+			return null;
+		}
+
+		String type = info.getElementalWeaknessType();
+		if (type == null || type.trim().isEmpty())
+		{
+			return percentage + " elemental weakness";
+		}
+
+		String normalizedType = type.trim();
+		return Character.toUpperCase(normalizedType.charAt(0)) + normalizedType.substring(1) + " " + percentage + " weakness";
+	}
+
+	static String elementalWeaknessPercentage(String value)
+	{
+		if (value == null || value.trim().isEmpty() || "No elemental weakness".equalsIgnoreCase(value.trim()))
+		{
+			return null;
+		}
+
+		String normalized = value.trim();
+		return normalized.matches("[+-]?\\d+(?:\\.\\d+)?") ? normalized + "%" : normalized;
+	}
+
+	static int elementalWeaknessRune(String type)
+	{
+		if (type == null)
+		{
+			return ItemID.BLANKRUNE_HIGH;
+		}
+
+		switch (type.trim().toLowerCase(Locale.ENGLISH))
+		{
+			case "air":
+				return ItemID.AIRRUNE;
+			case "water":
+				return ItemID.WATERRUNE;
+			case "earth":
+				return ItemID.EARTHRUNE;
+			case "fire":
+				return ItemID.FIRERUNE;
+			default:
+				return ItemID.BLANKRUNE_HIGH;
+		}
 	}
 
 	private static void addWeaknessPart(List<String> parts, String label, String value)
