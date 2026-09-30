@@ -84,6 +84,8 @@ Enhanced uses OSRS Wiki lookups only when the wiki lookup config is enabled. Wik
 
 NPC and item search results, including item variant choices, are served from the local Inspect cache when a matching cached entry is still fresh.
 
+Item and NPC panels show when their wiki data was fetched. **Refresh this item/NPC** fetches the selected page and variant again without clearing other cached entries. Refresh requires OSRS Wiki lookups to remain enabled. If a lookup fails and valid saved data exists, Inspect shows that data with a warning and its original timestamp. Expired item/NPC entries remain available for this fallback until replaced or explicitly cleared; a successful lookup with no matching result still reports not found. The timestamp applies to wiki details, not GE prices or local account checks.
+
 Player inspect uses locally visible client data only. It does not expose player information over HTTP.
 
 ## Development

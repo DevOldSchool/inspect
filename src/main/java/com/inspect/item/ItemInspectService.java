@@ -1,6 +1,7 @@
 package com.inspect.item;
 
 import com.google.gson.Gson;
+import com.inspect.inspect.WikiCacheLookup;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import javax.annotation.Nonnull;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -69,6 +71,13 @@ public class ItemInspectService
 		cache.shutDown();
 	}
 
+	public CompletableFuture<ItemInspectInfo> refresh(ItemInspectInfo info)
+	{
+		return fetchResolved(info.getItemId(), info.getDisplayName(),
+			new ItemWikiLookup(info.getWikiPage(), info.getWikiAnchor(), info.getSourceUrl()))
+			.exceptionally(error -> info.toBuilder().cachedFallback(true).build());
+	}
+
 	public CompletableFuture<Void> clearCacheAsync()
 	{
 		return cache.clearAsync();
@@ -82,8 +91,9 @@ public class ItemInspectService
 		}
 
 		long now = System.currentTimeMillis() / 1000L;
-		return cache.get(itemId, now, ttlDays)
-			.thenCompose(cached -> cached.map(CompletableFuture::completedFuture).orElseGet(() -> fetch(itemId, itemName)));
+		return cache.get(itemId, now, ttlDays, true)
+			.thenCompose(cached -> WikiCacheLookup.load(cached, info -> !info.isExpired(now, ttlDays),
+				() -> fetch(itemId, itemName), info -> info.toBuilder().cachedFallback(true).build()));
 	}
 
 	public CompletableFuture<ItemInspectInfo> inspect(ItemInspectVariant variant, int ttlDays)
@@ -95,8 +105,9 @@ public class ItemInspectService
 		}
 
 		long now = System.currentTimeMillis() / 1000L;
-		return cache.get(variant.getId(), now, ttlDays)
-			.thenCompose(cached -> cached.map(CompletableFuture::completedFuture).orElseGet(() -> fetch(variant)));
+		return cache.get(variant.getId(), now, ttlDays, true)
+			.thenCompose(cached -> WikiCacheLookup.load(cached, info -> !info.isExpired(now, ttlDays),
+				() -> fetch(variant), info -> info.toBuilder().cachedFallback(true).build()));
 	}
 
 	public CompletableFuture<List<ItemInspectVariant>> searchVariants(String query)
@@ -116,7 +127,19 @@ public class ItemInspectService
 		return cache.getVariants(normalizedQuery, now, ttlDays)
 			.thenCompose(cached -> cached
 				.map(CompletableFuture::completedFuture)
-				.orElseGet(() -> searchVariantsWiki(normalizedQuery)));
+				.orElseGet(() -> searchVariantsWiki(normalizedQuery)
+					.handle((variants, error) -> error == null
+						? CompletableFuture.completedFuture(variants)
+						: cache.getVariants(normalizedQuery, now, ttlDays, true).thenApply(saved ->
+						{
+							if (saved.isPresent())
+							{
+								return saved.get();
+							}
+							throw error instanceof CompletionException
+								? (CompletionException) error : new CompletionException(error);
+						}))
+					.thenCompose(result -> result)));
 	}
 
 	private CompletableFuture<List<ItemInspectVariant>> searchVariantsWiki(String query)
@@ -145,8 +168,9 @@ public class ItemInspectService
 
 		String normalizedQuery = query.trim();
 		long now = System.currentTimeMillis() / 1000L;
-		return cache.getBySearchTerm(normalizedQuery, now, ttlDays)
-			.thenCompose(cached -> cached.map(CompletableFuture::completedFuture).orElseGet(() -> searchWiki(normalizedQuery)));
+		return cache.getBySearchTerm(normalizedQuery, now, ttlDays, true)
+			.thenCompose(cached -> WikiCacheLookup.load(cached, info -> !info.isExpired(now, ttlDays),
+				() -> searchWiki(normalizedQuery), info -> info.toBuilder().cachedFallback(true).build()));
 	}
 
 	private CompletableFuture<ItemInspectInfo> searchWiki(String query)

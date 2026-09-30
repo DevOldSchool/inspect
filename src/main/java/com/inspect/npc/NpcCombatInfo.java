@@ -6,7 +6,7 @@ import lombok.Builder;
 import lombok.Value;
 
 @Value
-@Builder
+@Builder(toBuilder = true)
 public class NpcCombatInfo
 {
 	public static final int CACHE_SCHEMA_VERSION = 2;
@@ -69,6 +69,7 @@ public class NpcCombatInfo
 	@Builder.Default
 	List<NpcItemRequirement> itemRequirements = java.util.Collections.emptyList();
 	long fetchedAtEpochSecond;
+	transient boolean cachedFallback;
 	String sourceUrl;
 
 	public String cacheKey()

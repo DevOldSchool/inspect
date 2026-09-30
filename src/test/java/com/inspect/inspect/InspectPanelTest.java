@@ -830,6 +830,47 @@ public class InspectPanelTest
 	}
 
 	@Test
+	public void showsFetchedTimeAndFallbackWarningAndRefreshesSelectedItem() throws Exception
+	{
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			ItemInspectInfo info = ItemInspectInfo.builder().displayName("Saved item")
+				.wikiAnchor("Exact_variant").fetchedAtEpochSecond(1000L).cachedFallback(true).build();
+			AtomicReference<ItemInspectInfo> selected = new AtomicReference<>();
+			panel.setItemRefreshHandler(selected::set);
+			panel.showItemInfo(info, null, null, null);
+			UiSnapshot snapshot = UiSnapshot.capture(panel);
+			assertTrue(snapshot.text.contains("Wiki data fetched:"));
+			assertTrue(snapshot.text.contains("1970"));
+			assertTrue(snapshot.text.contains("Showing saved data"));
+			AbstractButton button = findButton(panel, "Refresh this item");
+			button.doClick();
+			assertEquals(info, selected.get());
+			assertFalse(button.isEnabled());
+			return null;
+		});
+	}
+
+	@Test
+	public void refreshesSelectedNpcAndDoesNotWarnForSuccessfulData() throws Exception
+	{
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo info = NpcCombatInfo.builder().displayName("Saved NPC")
+				.wikiAnchor("Exact_variant").fetchedAtEpochSecond(1000L).build();
+			AtomicReference<NpcCombatInfo> selected = new AtomicReference<>();
+			panel.setNpcRefreshHandler(selected::set);
+			panel.showInfo(info, null, null, Collections.emptyList());
+			assertFalse(UiSnapshot.capture(panel).text.contains("Showing saved data"));
+			findButton(panel, "Refresh this NPC").doClick();
+			assertEquals(info, selected.get());
+			return null;
+		});
+	}
+
+	@Test
 	public void rendersAlchLossAboveIntegerRange() throws Exception
 	{
 		UiSnapshot snapshot = onEdt(() ->
