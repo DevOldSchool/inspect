@@ -6,6 +6,7 @@ import static org.junit.Assert.assertTrue;
 
 import com.inspect.item.ItemInspectInfo;
 import com.inspect.item.ItemInspectVariant;
+import com.inspect.item.ItemPriceSummary;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemSource;
 import com.inspect.item.ItemSourceAccountMode;
@@ -826,6 +827,43 @@ public class InspectPanelTest
 		assertTrue(snapshot.text.contains("+45000"));
 		assertTrue(snapshot.text.contains("Different"));
 		assertTrue(snapshot.text.contains("Weapon"));
+	}
+
+	@Test
+	public void rendersAlchLossAboveIntegerRange() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.showItemInfo(ItemInspectInfo.builder().displayName("Expensive item").build(), null, null,
+				new ItemPriceSummary("3,000,000,000 gp", "60,000 gp", "40,000 gp",
+					"-2,999,940,000 gp", -2_999_940_000L));
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("3,000,000,000 gp"));
+		assertTrue(snapshot.text.contains("HA loss"));
+		assertTrue(snapshot.text.contains("-2,999,940,000 gp"));
+	}
+
+	@Test
+	public void comparesPlayerGearValuesAboveIntegerRange() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			PlayerEquipmentItem pinnedWeapon = new PlayerEquipmentItem("Weapon", 0, "Pinned weapon", 1_000_000_000L);
+			java.util.List<PlayerEquipmentItem> equipment = Arrays.asList(
+				new PlayerEquipmentItem("Weapon", 0, "Current weapon", 3_000_000_000L),
+				new PlayerEquipmentItem("Shield", 0, "Current shield", 2_000_000_000L));
+			panel.setPinnedInspects(PinnedInspectState.empty().withPlayer("Pinned player", 90, Collections.singletonList(pinnedWeapon)));
+			panel.showPlayerEquipment("Current player", 100, equipment,
+				PlayerInspectAnalysis.message("5,000,000,000 gp", null), false,
+				Collections.emptyList(), Collections.emptyList());
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("+4000000000"));
 	}
 
 	@Test

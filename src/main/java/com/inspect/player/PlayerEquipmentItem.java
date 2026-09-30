@@ -8,5 +8,5 @@ public class PlayerEquipmentItem
 	String slot;
 	int itemId;
 	String itemName;
-	int price;
+	long price;
 }
