@@ -21,6 +21,7 @@ import com.inspect.npc.NpcItemRequirement;
 import com.inspect.npc.NpcItemRequirementAlternativeStatus;
 import com.inspect.npc.NpcItemRequirementStatus;
 import com.inspect.npc.NpcInspectService;
+import com.inspect.npc.NpcThumbnailService;
 import com.inspect.player.PlayerEquipmentComparison;
 import com.inspect.player.PlayerEquipmentItem;
 import com.inspect.player.PlayerInspectAnalysis;
@@ -114,6 +115,9 @@ public class InspectPlugin extends Plugin
 	private NpcInspectService npcInspectService;
 
 	@Inject
+	private NpcThumbnailService npcThumbnailService;
+
+	@Inject
 	private ItemInspectService itemInspectService;
 
 	@Inject
@@ -155,6 +159,7 @@ public class InspectPlugin extends Plugin
 		inspectPanel.setItemRefreshHandler(this::refreshItem);
 		inspectPanel.setNpcRefreshHandler(this::refreshNpc);
 		inspectPanel.setNpcChoiceHandler(this::inspectNpcChoice);
+		inspectPanel.setNpcThumbnailLoader(npcThumbnailService::getThumbnail);
 		inspectPanel.setPinnedInspectHandler(new InspectPanel.PinnedInspectHandler()
 		{
 			@Override
@@ -280,6 +285,7 @@ public class InspectPlugin extends Plugin
 		clientToolbar.addNavigation(inspectNavButton);
 		overlayManager.add(bankEquipmentOverlay);
 		npcInspectService.startUp(config.clearNpcInspectCacheOnStartup());
+		npcThumbnailService.startUp();
 		itemInspectService.startUp(config.clearNpcInspectCacheOnStartup());
 		addPlayerInspectMenuOptionIfEnabled();
 		log.debug("Inspect plugin started");
@@ -293,6 +299,7 @@ public class InspectPlugin extends Plugin
 		overlayManager.remove(bankEquipmentOverlay);
 		bankEquipmentOverlay.clear();
 		npcInspectService.shutDown();
+		npcThumbnailService.shutDown();
 		itemInspectService.shutDown();
 		inspectPanel = null;
 		inspectNavButton = null;
@@ -402,6 +409,15 @@ public class InspectPlugin extends Plugin
 		if (!CONFIG_GROUP.equals(event.getGroup()))
 		{
 			return;
+		}
+
+		if ("enableWikiLookups".equals(event.getKey()))
+		{
+			npcThumbnailService.shutDown();
+			if (config.enableWikiLookups())
+			{
+				npcThumbnailService.startUp();
+			}
 		}
 
 		if ("showPlayerEquipmentInspectOption".equals(event.getKey()))

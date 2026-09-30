@@ -88,6 +88,7 @@ class NpcInspectParser
 			.npcId(resolvedNpcId)
 			.wikiPage(lookup.getPage())
 			.wikiAnchor(lookup.getAnchor())
+			.imageFile(value(fields, "image", suffix, null))
 			.displayName(value(fields, "name", suffix, fallbackName))
 			.combatLevel(value(fields, "combat", suffix, null))
 			.xpBonus(value(fields, "xpbonus", suffix, null))
@@ -252,7 +253,8 @@ class NpcInspectParser
 			}
 
 			String key = part.substring(0, equals).trim().toLowerCase();
-			String value = normalizeValue(part.substring(equals + 1).trim());
+			String rawValue = part.substring(equals + 1).trim();
+			String value = key.matches("image\\d*") ? imageFile(rawValue) : normalizeValue(rawValue);
 			if (!key.isEmpty())
 			{
 				fields.put(key, value);
@@ -361,6 +363,13 @@ class NpcInspectParser
 		}
 
 		return fallback;
+	}
+
+	private static String imageFile(String raw)
+	{
+		Matcher file = Pattern.compile("(?i)(?:File:|Image:)([^|\\]\\r\\n]+)").matcher(raw);
+		String name = file.find() ? file.group(1).trim() : raw.trim();
+		return name.matches("(?i)[^{}\\[\\]|]+\\.(png|gif|jpe?g|webp)") ? name : null;
 	}
 
 	private static String normalizeValue(String value)

@@ -30,6 +30,9 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Image;
+import java.awt.image.BufferedImage;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 import java.awt.Insets;
 import java.awt.Point;
 import java.awt.RenderingHints;
@@ -97,6 +100,8 @@ public class InspectPanel extends PluginPanel
 	private java.util.function.Consumer<NpcCombatInfo> npcRefreshHandler;
 	@Setter
 	private java.util.function.Consumer<NpcCombatInfo> npcChoiceHandler;
+	@Setter
+	private Function<String, CompletableFuture<BufferedImage>> npcThumbnailLoader;
 	@lombok.Getter
 	private long viewRevision;
 	private NpcCombatInfo displayedNpcInfo;
@@ -233,30 +238,16 @@ public class InspectPanel extends PluginPanel
 		lastSearchType = "NPC";
 		lastSearchText = results.getQuery();
 		reset();
-		addFullWidth(searchTitle("Choose NPC"));
-		addFullWidth(message("Matches from up to 5 wiki pages (maximum 50 variants). Refine your search if needed."));
+		addFullWidth(searchTitle("Choose NPC variant"));
+		addFullWidth(message(results.getChoices().size() + " variants matched " + lastSearchText
+			+ ". Choose the exact version to inspect."));
 		if (results.isPartial())
 		{
 			addFullWidth(message("Some wiki pages could not be loaded. These results may be incomplete; try searching again."));
 		}
+		addFullWidth(variantPickerPanel(results.getChoices(), this::npcVariantRow));
 		boolean fallback = results.getChoices().stream().anyMatch(NpcCombatInfo::isCachedFallback);
 		addFreshness(results.getFetchedAtEpochSecond(), fallback, "NPC", null);
-		for (NpcCombatInfo choice : results.getChoices())
-		{
-			String variant = choice.getWikiAnchor() == null ? "" : " - " + choice.getWikiAnchor().replace('_', ' ');
-			JButton button = panelButton("<html>" + escape(valueOrDash(choice.getDisplayName()) + variant)
-				+ "<br>Combat: " + escape(valueOrDash(choice.getCombatLevel())) + " | ID: " + choice.getNpcId()
-				+ "<br>" + escape(choice.getWikiPage().replace('_', ' ')) + "</html>");
-			button.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, 70));
-			button.addActionListener(event ->
-			{
-				if (npcChoiceHandler != null)
-				{
-					npcChoiceHandler.accept(choice);
-				}
-			});
-			addFullWidth(button);
-		}
 		refresh();
 	}
 
@@ -269,11 +260,11 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(searchTitle("Choose item variant"));
 		addFullWidth(message(variants.size() + " variants matched " + lastSearchText
 			+ ". Choose the exact version to inspect."));
-		addFullWidth(itemVariantPickerPanel(variants));
+		addFullWidth(variantPickerPanel(variants, this::itemVariantRow));
 		refresh();
 	}
 
-	private JPanel itemVariantPickerPanel(List<ItemInspectVariant> variants)
+	private <T> JPanel variantPickerPanel(List<T> variants, Function<T, JPanel> rowFactory)
 	{
 		JPanel panel = new JPanel(new GridBagLayout());
 		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
@@ -287,7 +278,7 @@ public class InspectPanel extends PluginPanel
 		for (int i = 0; i < variants.size(); i++)
 		{
 			constraints.gridy = i;
-			panel.add(itemVariantRow(variants.get(i)), constraints);
+			panel.add(rowFactory.apply(variants.get(i)), constraints);
 		}
 
 		int height = Math.max(1, variants.size()) * 50 + 8;
@@ -298,11 +289,6 @@ public class InspectPanel extends PluginPanel
 
 	private JPanel itemVariantRow(ItemInspectVariant variant)
 	{
-		JPanel row = new JPanel(new GridBagLayout());
-		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		row.setBorder(new EmptyBorder(3, 3, 3, 3));
-		row.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 32, 46));
-
 		JLabel icon = new JLabel("", SwingConstants.CENTER);
 		icon.setPreferredSize(new Dimension(38, 38));
 		icon.setToolTipText(variant.getDisplayName());
@@ -311,6 +297,58 @@ public class InspectPanel extends PluginPanel
 			itemManager.getImage(variant.getId()).addTo(icon);
 		}
 
+		return variantRow(icon, valueOrDash(variant.getDisplayName()), itemVariantDetails(variant),
+			variant.getSourceUrl(), () ->
+			{
+				if (itemVariantInspectHandler != null)
+				{
+					itemVariantInspectHandler.inspectItem(variant);
+				}
+			});
+	}
+
+	private JPanel npcVariantRow(NpcCombatInfo choice)
+	{
+		String variant = choice.getWikiAnchor() == null ? "" : " - " + displayAnchor(choice.getWikiAnchor());
+		String name = valueOrDash(choice.getDisplayName()) + variant;
+		JLabel icon = new JLabel("?", SwingConstants.CENTER);
+		icon.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		icon.setPreferredSize(new Dimension(38, 38));
+		icon.setToolTipText("No image available for " + name);
+		if (npcThumbnailLoader != null && choice.getImageFile() != null)
+		{
+			icon.setToolTipText("Loading image for " + name);
+			npcThumbnailLoader.apply(choice.getImageFile()).whenComplete((image, error) -> SwingUtilities.invokeLater(() ->
+			{
+				if (image != null && error == null)
+				{
+					icon.setText("");
+					icon.setIcon(new ImageIcon(image));
+					icon.setToolTipText(name);
+				}
+				else
+				{
+					icon.setToolTipText("No image available for " + name);
+				}
+			}));
+		}
+		return variantRow(icon, name, "Combat " + valueOrDash(choice.getCombatLevel()) + " · ID " + choice.getNpcId(),
+			name + " — " + choice.getWikiPage(), () ->
+			{
+				if (npcChoiceHandler != null)
+				{
+					npcChoiceHandler.accept(choice);
+				}
+			});
+	}
+
+	private JPanel variantRow(JLabel icon, String name, String detailText, String tooltip, Runnable select)
+	{
+		JPanel row = new JPanel(new GridBagLayout());
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setBorder(new EmptyBorder(3, 3, 3, 3));
+		row.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 32, 46));
+
 		GridBagConstraints iconConstraints = new GridBagConstraints();
 		iconConstraints.gridx = 0;
 		iconConstraints.gridy = 0;
@@ -318,21 +356,16 @@ public class InspectPanel extends PluginPanel
 		iconConstraints.insets = new Insets(0, 0, 0, 4);
 		row.add(icon, iconConstraints);
 
-		JButton button = new JButton(valueOrDash(variant.getDisplayName()));
+		JButton button = new JButton(name);
 		button.setHorizontalAlignment(SwingConstants.LEFT);
 		button.setFocusPainted(false);
 		button.setBackground(ColorScheme.MEDIUM_GRAY_COLOR);
 		button.setForeground(ColorScheme.BRAND_ORANGE);
 		button.setFont(FontManager.getRunescapeSmallFont());
 		button.setBorder(new EmptyBorder(3, 5, 3, 5));
-		button.setToolTipText(variant.getSourceUrl());
-		button.addActionListener(event ->
-		{
-			if (itemVariantInspectHandler != null)
-			{
-				itemVariantInspectHandler.inspectItem(variant);
-			}
-		});
+		button.setToolTipText(tooltip);
+		button.setMinimumSize(new Dimension(0, button.getPreferredSize().height));
+		button.addActionListener(event -> select.run());
 
 		GridBagConstraints buttonConstraints = new GridBagConstraints();
 		buttonConstraints.gridx = 1;
@@ -341,10 +374,11 @@ public class InspectPanel extends PluginPanel
 		buttonConstraints.fill = GridBagConstraints.HORIZONTAL;
 		row.add(button, buttonConstraints);
 
-		JLabel details = new JLabel(itemVariantDetails(variant));
+		JLabel details = new JLabel(detailText);
 		details.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		details.setFont(FontManager.getRunescapeSmallFont());
 		details.setBorder(new EmptyBorder(2, 5, 0, 0));
+		details.setMinimumSize(new Dimension(0, details.getPreferredSize().height));
 
 		GridBagConstraints detailConstraints = new GridBagConstraints();
 		detailConstraints.gridx = 1;
