@@ -69,6 +69,35 @@ public class CombatStyleRecommendationTest
 		assertFalse(CombatStyleRecommendation.STAB.isRelevant(nonPositiveItem));
 	}
 
+	@Test
+	public void explanationsUseTheSameBonusesAndWeightsAsRanking()
+	{
+		ItemInspectInfo item = ItemInspectInfo.builder().attackStab("-2").attackSlash("10").attackCrush("8")
+			.strength("4").attackMagic("5").magicDamage("2.5%").attackRanged("9").rangedStrength("3").prayer("3").build();
+		for (CombatStyleRecommendation style : CombatStyleRecommendation.values())
+		{
+			EquipmentScore score = style.scoreBreakdown(item);
+			assertEquals(style.score(item), score.getTotal(), 0.0);
+			assertTrue(score.getExplanation().contains("× 1.5"));
+			assertTrue(score.getExplanation().contains("Prayer (3) × 0.1"));
+		}
+		assertEquals(4.3, CombatStyleRecommendation.STAB.scoreBreakdown(item).getTotal(), 0.00001);
+		assertEquals(9.05, CombatStyleRecommendation.MAGIC.scoreBreakdown(item).getTotal(), 0.00001);
+		assertTrue(CombatStyleRecommendation.MAGIC.scoreBreakdown(item).getSummary().contains("Magic damage (%) +2.5"));
+		assertTrue(CombatStyleRecommendation.RANGED.scoreBreakdown(item).getSummary().contains("Ranged strength +3"));
+	}
+
+	@Test
+	public void missingStatsAreDistinguishedFromKnownZero()
+	{
+		EquipmentScore score = CombatStyleRecommendation.STAB.scoreBreakdown(
+			ItemInspectInfo.builder().attackStab("10").prayer("0").build());
+		assertEquals(10.0, score.getTotal(), 0.0);
+		assertTrue(score.getSummary().contains("Strength ?"));
+		assertTrue(score.getSummary().contains("Prayer 0"));
+		assertTrue(score.getExplanation().contains("0 (unknown)"));
+	}
+
 	private static NpcCombatInfo npc(
 		String stab,
 		String slash,

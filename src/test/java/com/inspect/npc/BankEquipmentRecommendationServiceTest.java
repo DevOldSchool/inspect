@@ -140,7 +140,7 @@ public class BankEquipmentRecommendationServiceTest
 	}
 
 	@Test
-	public void recommendationIsCappedAtTwelveWithConsecutiveRanks() throws Exception
+	public void recommendationIsCappedAtThreePerSlotWithConsecutiveRanks() throws Exception
 	{
 		AtomicInteger calls = new AtomicInteger();
 		BankEquipmentRecommendationService service = new BankEquipmentRecommendationService((itemId, itemName, ttlDays) ->
@@ -157,9 +157,9 @@ public class BankEquipmentRecommendationServiceTest
 		EquipmentRecommendation recommendation = service.recommend(stabNpc(), candidates, 7).get(5, TimeUnit.SECONDS);
 
 		assertEquals(15, calls.get());
-		assertEquals(12, recommendation.getItems().size());
+		assertEquals(3, recommendation.getItems().size());
 		assertEquals(15, recommendation.getItems().get(0).getItemId());
-		assertEquals(4, recommendation.getItems().get(11).getItemId());
+		assertEquals(13, recommendation.getItems().get(2).getItemId());
 		for (int index = 0; index < recommendation.getItems().size(); index++)
 		{
 			assertEquals(index + 1, recommendation.getItems().get(index).getRank());

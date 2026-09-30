@@ -9,63 +9,43 @@ import java.util.Objects;
 
 public enum CombatStyleRecommendation
 {
-	STAB("Stab melee", "Stab defence")
-		{
-			@Override
-			double score(ItemInspectInfo item)
-			{
-				return offensiveScore(item.getAttackStab(), item.getStrength(), item.getPrayer());
-			}
-		},
-	SLASH("Slash melee", "Slash defence")
-		{
-			@Override
-			double score(ItemInspectInfo item)
-			{
-				return offensiveScore(item.getAttackSlash(), item.getStrength(), item.getPrayer());
-			}
-		},
-	CRUSH("Crush melee", "Crush defence")
-		{
-			@Override
-			double score(ItemInspectInfo item)
-			{
-				return offensiveScore(item.getAttackCrush(), item.getStrength(), item.getPrayer());
-			}
-		},
-	MAGIC("Magic", "Magic defence")
-		{
-			@Override
-			double score(ItemInspectInfo item)
-			{
-				return offensiveScore(item.getAttackMagic(), item.getMagicDamage(), item.getPrayer());
-			}
-		},
-	RANGED("Ranged", "Ranged defence")
-		{
-			@Override
-			double score(ItemInspectInfo item)
-			{
-				return offensiveScore(item.getAttackRanged(), item.getRangedStrength(), item.getPrayer());
-			}
-		};
+	STAB("Stab melee", "Stab defence", "Stab", ItemInspectInfo::getAttackStab, "Strength", ItemInspectInfo::getStrength),
+	SLASH("Slash melee", "Slash defence", "Slash", ItemInspectInfo::getAttackSlash, "Strength", ItemInspectInfo::getStrength),
+	CRUSH("Crush melee", "Crush defence", "Crush", ItemInspectInfo::getAttackCrush, "Strength", ItemInspectInfo::getStrength),
+	MAGIC("Magic", "Magic defence", "Magic accuracy", ItemInspectInfo::getAttackMagic, "Magic damage (%)", ItemInspectInfo::getMagicDamage),
+	RANGED("Ranged", "Ranged defence", "Ranged accuracy", ItemInspectInfo::getAttackRanged, "Ranged strength", ItemInspectInfo::getRangedStrength);
 
 	@Getter
-    private final String displayName;
+	private final String displayName;
+	@Getter
 	private final String defenceLabel;
+	private final String accuracyLabel;
+	private final java.util.function.Function<ItemInspectInfo, String> accuracy;
+	private final String damageLabel;
+	private final java.util.function.Function<ItemInspectInfo, String> damage;
 
-	CombatStyleRecommendation(String displayName, String defenceLabel)
+	CombatStyleRecommendation(String displayName, String defenceLabel, String accuracyLabel,
+		java.util.function.Function<ItemInspectInfo, String> accuracy, String damageLabel,
+		java.util.function.Function<ItemInspectInfo, String> damage)
 	{
 		this.displayName = displayName;
 		this.defenceLabel = defenceLabel;
+		this.accuracyLabel = accuracyLabel;
+		this.accuracy = accuracy;
+		this.damageLabel = damageLabel;
+		this.damage = damage;
 	}
 
-    String getDefenceLabel()
+	public EquipmentScore scoreBreakdown(ItemInspectInfo item)
 	{
-		return defenceLabel;
+		return new EquipmentScore(accuracyLabel, numericValue(accuracy.apply(item)), damageLabel,
+			numericValue(damage.apply(item)), numericValue(item.getPrayer()));
 	}
 
-	abstract double score(ItemInspectInfo item);
+	double score(ItemInspectInfo item)
+	{
+		return scoreBreakdown(item).getTotal();
+	}
 
 	boolean isRelevant(ItemInspectInfo item)
 	{
@@ -139,7 +119,8 @@ public enum CombatStyleRecommendation
 
 		try
 		{
-			return Double.parseDouble(number.toString());
+			double result = Double.parseDouble(number.toString());
+			return Double.isFinite(result) ? result : null;
 		}
 		catch (NumberFormatException ex)
 		{
@@ -165,17 +146,6 @@ public enum CombatStyleRecommendation
 			}
 		}
 		return lowest == null ? null : Double.toString(lowest);
-	}
-
-	private static double offensiveScore(String accuracy, String damage, String prayer)
-	{
-		return value(accuracy) + value(damage) * 1.5d + value(prayer) * 0.1d;
-	}
-
-	private static double value(String value)
-	{
-		Double numeric = numericValue(value);
-		return numeric == null ? 0 : numeric;
 	}
 
 	private static final class Candidate

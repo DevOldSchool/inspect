@@ -15,7 +15,7 @@ import javax.inject.Singleton;
 @Singleton
 public class BankEquipmentRecommendationService
 {
-	private static final int RECOMMENDATION_LIMIT = 12;
+	private static final int RECOMMENDATIONS_PER_SLOT = 3;
 
 	private final ItemLookupService itemLookupService;
 	private final BatchItemLookupService batchItemLookupService;
@@ -84,7 +84,7 @@ public class BankEquipmentRecommendationService
 				}));
 		}
 
-		return lookupChain.thenApply(ignored -> EquipmentRecommendation.fromCandidates(npc, items, RECOMMENDATION_LIMIT));
+		return lookupChain.thenApply(ignored -> EquipmentRecommendation.fromCandidates(npc, items, RECOMMENDATIONS_PER_SLOT));
 	}
 
 	private static EquipmentRecommendation recommendationFromLookups(NpcCombatInfo npc, Map<Integer, BankItemCandidate> candidates, Map<Integer, ItemInspectInfo> lookups)
@@ -99,7 +99,7 @@ public class BankEquipmentRecommendationService
 				items.add(new EquipmentRecommendation.CandidateItem(info, candidate.isInBank(), candidate.isEquipped()));
 			}
 		}
-		return EquipmentRecommendation.fromCandidates(npc, items, RECOMMENDATION_LIMIT);
+		return EquipmentRecommendation.fromCandidates(npc, items, RECOMMENDATIONS_PER_SLOT);
 	}
 
 	@FunctionalInterface

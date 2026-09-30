@@ -105,6 +105,9 @@ public class InspectPanel extends PluginPanel
 	@lombok.Getter
 	private long viewRevision;
 	private NpcCombatInfo displayedNpcInfo;
+	private ItemInspectInfo displayedItemInfo;
+	private ItemInspectInfo lastPriceItem;
+	private ItemPriceSummary lastItemPrices;
 	private String activeTab = "Item";
 	private String activeDropFilter = "Valuable";
 	private PinnedInspectState pinnedInspects = PinnedInspectState.empty();
@@ -123,6 +126,18 @@ public class InspectPanel extends PluginPanel
 	private Point restoreScrollPositionOnNextReset;
 	private Point storedNpcScrollPosition;
 	private boolean cacheManagementVisible;
+	private PanelPreferences panelPreferences = PanelPreferences.inMemory();
+	private CollapsibleSection currentSection;
+
+	public void setPanelPreferences(PanelPreferences preferences)
+	{
+		panelPreferences = preferences;
+		activeDropFilter = preferences.dropFilter();
+		if (lastItemRenderer == null && lastNpcRenderer == null && lastPlayerRenderer == null)
+		{
+			showEmpty();
+		}
+	}
 
 	public boolean isShowingNpc(NpcCombatInfo info)
 	{
@@ -506,6 +521,11 @@ public class InspectPanel extends PluginPanel
 	public void showInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage,
 		List<NpcItemRequirementStatus> itemRequirementStatuses, Map<String, Integer> dropItemIds)
 	{
+		// Status/results updates for the visible NPC should not restart navigation.
+		if (isShowingNpc(info))
+		{
+			preserveScrollOnNextReset = true;
+		}
 		List<NpcItemRequirementStatus> statuses = itemRequirementStatuses == null
 			? Collections.emptyList()
 			: new ArrayList<>(itemRequirementStatuses);
@@ -533,7 +553,7 @@ public class InspectPanel extends PluginPanel
 		addPinNpcButton(info);
 		addFreshness(info.getFetchedAtEpochSecond(), info.isCachedFallback(), "NPC",
 			npcRefreshHandler == null ? null : () -> npcRefreshHandler.accept(info));
-		addFullWidth(section("Combat info"));
+		beginSection("combatInfo", "Combat info");
 		addFullWidth(rows(
 			row("Combat level", info.getCombatLevel()),
 			row("XP bonus", info.getXpBonus()),
@@ -545,7 +565,7 @@ public class InspectPanel extends PluginPanel
 			row("Respawn time", info.getRespawnTime())
 		));
 
-		addFullWidth(section("Combat stats"));
+		beginSection("combatStats", "Combat stats");
 		addFullWidth(grid(new StatCell[]{
 			iconCell("Hitpoints", "hitpoints.png", info.getHitpoints()),
 			iconCell("Attack", "attack.png", info.getAttack()),
@@ -555,7 +575,7 @@ public class InspectPanel extends PluginPanel
 			iconCell("Ranged", "ranged.png", info.getRanged())
 		}, 6));
 
-		addFullWidth(section("Aggressive stats"));
+		beginSection("aggressiveStats", "Aggressive stats");
 		addFullWidth(grid(new StatCell[]{
 			iconCell("Attack bonus", "white-dagger.png", info.getAttackBonus()),
 			iconCell("Strength bonus", "strength.png", info.getStrengthBonus()),
@@ -565,14 +585,14 @@ public class InspectPanel extends PluginPanel
 			iconCell("Ranged strength", "ranged-strength.png", info.getRangedStrength())
 		}, 6));
 
-		addFullWidth(section("Melee defence"));
+		beginSection("meleeDefence", "Melee defence");
 		addFullWidth(grid(new StatCell[]{
 			iconCell("Stab defence", "white-dagger.png", info.getStabDefence()),
 			iconCell("Slash defence", "white-scimitar.png", info.getSlashDefence()),
 			iconCell("Crush defence", "white-warhammer.png", info.getCrushDefence())
 		}, 3));
 
-		addFullWidth(section("Magic defence"));
+		beginSection("magicDefence", "Magic defence");
 		String elementalWeakness = elementalWeaknessPercentage(info.getElementalWeakness());
 		addFullWidth(grid(new StatCell[]{
 			iconCell("Magic defence", "magic-defence.png", info.getMagicDefence()),
@@ -580,14 +600,14 @@ public class InspectPanel extends PluginPanel
 				elementalWeakness == null ? info.getElementalWeakness() : elementalWeakness)
 		}, 2));
 
-		addFullWidth(section("Ranged defence"));
+		beginSection("rangedDefence", "Ranged defence");
 		addFullWidth(grid(new StatCell[]{
 			iconCell("Light ranged defence", "steel-dart.png", info.getLightRangedDefence()),
 			iconCell("Standard ranged defence", "steel-arrow-5.png", info.getStandardRangedDefence()),
 			iconCell("Heavy ranged defence", "steel-bolts-5.png", info.getHeavyRangedDefence())
 		}, 3));
 
-		addFullWidth(section("Immunities"));
+		beginSection("immunities", "Immunities");
 		addFullWidth(rows(
 			row("Poison", info.getPoisonResistance()),
 			row("Venom", info.getVenomResistance()),
@@ -603,6 +623,7 @@ public class InspectPanel extends PluginPanel
 		addKillChecklist(info);
 		addEquipmentRecommendation(info, recommendation, recommendationMessage);
 
+		endSection();
 		if (info.getSourceUrl() != null)
 		{
 			addFullWidth(sourceButton(info.getSourceUrl()));
@@ -623,8 +644,24 @@ public class InspectPanel extends PluginPanel
 		ItemPriceSummary priceSummary,
 		ItemSourceReadiness sourceReadiness)
 	{
-		lastItemRenderer = () -> renderItemInfo(info, equippedInfo, requirementSummary, priceSummary, sourceReadiness);
+		lastPriceItem = info;
+		lastItemPrices = priceSummary;
+		lastItemRenderer = () -> renderItemInfo(info, equippedInfo, requirementSummary, lastItemPrices, sourceReadiness);
 		renderItemInfo(info, equippedInfo, requirementSummary, priceSummary, sourceReadiness);
+	}
+
+	public void updateItemPrices(ItemInspectInfo info, ItemPriceSummary prices)
+	{
+		if (lastPriceItem != info)
+		{
+			return;
+		}
+		lastItemPrices = prices;
+		if (displayedItemInfo == info)
+		{
+			preserveScrollOnNextReset = true;
+			lastItemRenderer.run();
+		}
 	}
 
 	private void renderItemInfo(
@@ -636,11 +673,12 @@ public class InspectPanel extends PluginPanel
 	{
 		activeTab = "Item";
 		reset();
+		displayedItemInfo = info;
 		addFullWidth(title(valueOrDash(info.getDisplayName())));
 		addPinItemButton(info);
 		addFreshness(info.getFetchedAtEpochSecond(), info.isCachedFallback(), "item",
 			itemRefreshHandler == null ? null : () -> itemRefreshHandler.accept(info));
-		addFullWidth(section("Item info"));
+		beginSection("itemInfo", "Item info");
 		addFullWidth(grid(new StatCell[]{
 			itemCell("Item", info.getItemId(), "")
 		}, 1));
@@ -660,7 +698,7 @@ public class InspectPanel extends PluginPanel
 
 		if (hasAny(info.getAttackStab(), info.getAttackSlash(), info.getAttackCrush(), info.getAttackMagic(), info.getAttackRanged()))
 		{
-			addFullWidth(section("Attack bonuses"));
+			beginSection("attackBonuses", "Attack bonuses");
 			addFullWidth(grid(new StatCell[]{
 				cell("Stab attack", SpriteID.Combaticons.SWORD_STAB, info.getAttackStab()),
 				cell("Slash attack", SpriteID.Combaticons.SWORD_SLASH, info.getAttackSlash()),
@@ -672,7 +710,7 @@ public class InspectPanel extends PluginPanel
 
 		if (hasAny(info.getDefenceStab(), info.getDefenceSlash(), info.getDefenceCrush(), info.getDefenceMagic(), info.getDefenceRanged()))
 		{
-			addFullWidth(section("Defence bonuses"));
+			beginSection("defenceBonuses", "Defence bonuses");
 			addFullWidth(grid(new StatCell[]{
 				cell("Stab defence", SpriteID.Combaticons.SWORD_STAB, info.getDefenceStab()),
 				cell("Slash defence", SpriteID.Combaticons.SWORD_SLASH, info.getDefenceSlash()),
@@ -684,7 +722,7 @@ public class InspectPanel extends PluginPanel
 
 		if (hasAny(info.getStrength(), info.getRangedStrength(), info.getMagicDamage(), info.getPrayer()))
 		{
-			addFullWidth(section("Other bonuses"));
+			beginSection("otherBonuses", "Other bonuses");
 			addFullWidth(grid(new StatCell[]{
 				cell("Strength", SpriteID.Staticons.STRENGTH, info.getStrength()),
 				cell("Ranged strength", SpriteID.Combaticons2.BOW_ACCURATE, info.getRangedStrength()),
@@ -701,10 +739,11 @@ public class InspectPanel extends PluginPanel
 
 		if (info.getExamine() != null)
 		{
-			addFullWidth(section("Examine"));
+			beginSection("examine", "Examine");
 			addFullWidth(message(info.getExamine()));
 		}
 
+		endSection();
 		if (info.getSourceUrl() != null)
 		{
 			addFullWidth(sourceButton(info.getSourceUrl()));
@@ -753,22 +792,13 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Equipment recommendation"));
+		beginSection("equipmentRecommendation", "Equipment recommendation");
 		List<JPanel> rows = new ArrayList<>();
 		rows.add(row("Style", recommendation.getStyleName()));
 		rows.add(row("Based on", recommendation.getDefenceLabel()));
 		if (message != null && !message.isEmpty())
 		{
 			rows.add(row("Bank", message));
-		}
-		if (recommendation.hasItems())
-		{
-			int index = 1;
-			for (EquipmentRecommendation.RecommendedItem item : recommendation.getItems())
-			{
-				rows.add(row(index + ". " + valueOrDash(item.getSlot()), item.getDisplayName() + sourceLabel(item) + scoreLabel(item)));
-				index++;
-			}
 		}
 		addFullWidth(rows(rows.toArray(new JPanel[0])));
 
@@ -795,7 +825,66 @@ public class InspectPanel extends PluginPanel
 				}
 			});
 			addFullWidth(clearButton);
+			addFullWidth(message("Top candidates per slot. Bank numbers show the rank within that slot."));
+			addFullWidth(message("Score = accuracy + 1.5 × strength/damage + 0.1 × Prayer. Speed, special effects and requirements are not included."));
+			for (Map.Entry<String, List<EquipmentRecommendation.RecommendedItem>> group : recommendation.getItemsBySlot().entrySet())
+			{
+				JLabel heading = new JLabel(group.getKey(), SwingConstants.LEFT);
+				heading.setForeground(ColorScheme.BRAND_ORANGE);
+				heading.setFont(FontManager.getRunescapeBoldFont());
+				heading.setBorder(new EmptyBorder(6, 4, 2, 4));
+				addFullWidth(heading);
+				List<JPanel> candidates = new ArrayList<>();
+				for (EquipmentRecommendation.RecommendedItem item : group.getValue())
+				{
+					candidates.add(equipmentRecommendationRow(item));
+				}
+				addFullWidth(rows(candidates.toArray(new JPanel[0])));
+			}
+			if (recommendation.getItems().stream().anyMatch(EquipmentRecommendation.RecommendedItem::isTwoHanded))
+			{
+				addFullWidth(message("Two-handed weapons also occupy the shield slot. Compare these as alternatives."));
+			}
 		}
+	}
+
+	private JPanel equipmentRecommendationRow(EquipmentRecommendation.RecommendedItem item)
+	{
+		JLabel icon = new JLabel("", SwingConstants.CENTER);
+		icon.setPreferredSize(new Dimension(38, 38));
+		if (itemManager != null && item.getItemId() > 0)
+		{
+			itemManager.getImage(item.getItemId()).addTo(icon);
+		}
+		String name = item.getRank() + ". " + valueOrDash(item.getDisplayName()) + (item.isTwoHanded() ? " (2h)" : "");
+		String details = "Score " + DELTA_FORMAT.format(item.getScore()) + sourceLabel(item);
+		JPanel choice = variantRow(icon, name, details, name + "; " + details, () ->
+		{
+			if (itemInspectHandler != null)
+			{
+				itemInspectHandler.inspectItem(item.getItemId(), item.getDisplayName());
+			}
+		});
+		String explanation = "<html><body style='width:220px'>"
+			+ escape(item.getBreakdown().getExplanation()) + "</body></html>";
+		((JComponent) choice.getComponent(2)).setToolTipText(explanation);
+		JTextArea stats = new JTextArea(item.getBreakdown().getSummary());
+		stats.setFont(FontManager.getRunescapeSmallFont());
+		stats.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		stats.setOpaque(false);
+		stats.setEditable(false);
+		stats.setLineWrap(true);
+		stats.setWrapStyleWord(true);
+		stats.setToolTipText(explanation);
+		stats.setBorder(new EmptyBorder(2, 5, 5, 5));
+		stats.setSize(PluginPanel.PANEL_WIDTH - 40, Short.MAX_VALUE);
+		JPanel row = new JPanel(new java.awt.BorderLayout());
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.add(choice, java.awt.BorderLayout.NORTH);
+		row.add(stats, java.awt.BorderLayout.CENTER);
+		row.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 32,
+			choice.getPreferredSize().height + stats.getPreferredSize().height + 4));
+		return row;
 	}
 
 	private void addPinNpcButton(NpcCombatInfo info)
@@ -867,7 +956,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Compared to NPC"));
+		beginSection("npcComparison", "Compared to NPC");
 		addFullWidth(rows(rows.toArray(new JPanel[0])));
 	}
 
@@ -890,7 +979,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Weakness summary"));
+		beginSection("weakness", "Weakness summary");
 		addFullWidth(rows(rows.toArray(new JPanel[0])));
 	}
 
@@ -906,7 +995,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Slayer"));
+		beginSection("slayer", "Slayer");
 		JPanel[] slayerRows = nonEmptyRows(
 			"Level", info.getSlayerLevel(),
 			"Category", info.getSlayerCategory(),
@@ -921,7 +1010,7 @@ public class InspectPanel extends PluginPanel
 		List<String> assignedBy = splitTags(info.getAssignedBy());
 		if (!assignedBy.isEmpty())
 		{
-			addFullWidth(section("Assigned by"));
+			beginSection("slayerMasters", "Assigned by");
 			addFullWidth(wikiChips(assignedBy));
 		}
 	}
@@ -935,7 +1024,7 @@ public class InspectPanel extends PluginPanel
 		}
 
 		DropFilterOption selected = selectedDropFilter(filters);
-		addFullWidth(section("Drop filters"));
+		beginSection("drops", "Drop filters");
 		addFullWidth(dropFilterButtons(filters, selected));
 		addFullWidth(dropItemsPanel(selected, dropItemIds));
 	}
@@ -950,7 +1039,6 @@ public class InspectPanel extends PluginPanel
 			}
 		}
 
-		activeDropFilter = filters.get(0).label;
 		return filters.get(0);
 	}
 
@@ -993,6 +1081,7 @@ public class InspectPanel extends PluginPanel
 		button.addActionListener(event ->
 		{
 			activeDropFilter = filter.label;
+			panelPreferences.setDropFilter(activeDropFilter);
 			if (lastNpcRenderer != null)
 			{
 				preserveScrollOnNextReset = true;
@@ -1097,7 +1186,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Required items"));
+		beginSection("requiredItems", "Required items");
 		addFullWidth(requiredItemsPanel(itemRequirementStatuses));
 	}
 
@@ -1219,7 +1308,7 @@ public class InspectPanel extends PluginPanel
 		rows.add(row("Aggressive", info.getAggressive()));
 		rows.add(row("Poison", info.getPoisonous()));
 		rows.add(row("Suggested style", CombatStyleRecommendation.forNpc(info) == null ? null : CombatStyleRecommendation.forNpc(info).getDisplayName()));
-		addFullWidth(section("Can I kill this?"));
+		beginSection("killChecklist", "Can I kill this?");
 		addFullWidth(rows(rows.toArray(new JPanel[0])));
 	}
 
@@ -1241,11 +1330,6 @@ public class InspectPanel extends PluginPanel
 		}
 
 		return "";
-	}
-
-	private static String scoreLabel(EquipmentRecommendation.RecommendedItem item)
-	{
-		return " (score " + DELTA_FORMAT.format(item.getScore()) + ")";
 	}
 
 	private static JButton panelButton(String text)
@@ -1298,7 +1382,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Compared to equipped"));
+		beginSection("equippedComparison", "Compared to equipped");
 		addFullWidth(rows(comparisonRows.toArray(new JPanel[0])));
 	}
 
@@ -1332,7 +1416,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Compared to item"));
+		beginSection("itemComparison", "Compared to item");
 		addFullWidth(rows(comparisonRows.toArray(new JPanel[0])));
 	}
 
@@ -1365,13 +1449,20 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Prices"));
+		beginSection("prices", "Prices");
 		List<JPanel> priceRows = new ArrayList<>();
 		addPriceRow(priceRows, "GE", priceSummary.getGePrice(), ColorScheme.LIGHT_GRAY_COLOR);
 		addPriceRow(priceRows, "High alch", priceSummary.getHighAlch(), ColorScheme.LIGHT_GRAY_COLOR);
 		addPriceRow(priceRows, "Low alch", priceSummary.getLowAlch(), ColorScheme.LIGHT_GRAY_COLOR);
+		addPriceRow(priceRows, "HA cast cost", priceSummary.getCastingCost(), ColorScheme.LIGHT_GRAY_COLOR);
 		addPriceRow(priceRows, highAlchProfitLabel(priceSummary), priceSummary.getHighAlchProfit(), highAlchProfitColor(priceSummary));
 		addFullWidth(rows(priceRows.toArray(new JPanel[0])));
+		if (priceSummary.getCastingCostDescription() != null)
+		{
+			JTextArea explanation = message(priceSummary.getCastingCostDescription());
+			explanation.setToolTipText("Standard High Level Alchemy: excludes random rune savings and free Explorer's ring casts.");
+			addFullWidth(explanation);
+		}
 	}
 
 	private static void addPriceRow(List<JPanel> rows, String label, String value, Color valueColor)
@@ -1448,7 +1539,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Gear role"));
+		beginSection("gearRole", "Gear role");
 		addFullWidth(chips(tags));
 	}
 
@@ -1461,7 +1552,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Sources"));
+		beginSection("sources", "Sources");
 		if (info.getSourcePlan() != null && !info.getSourcePlan().isEmpty())
 		{
 			if (sourceReadiness != null && sourceReadiness.getSources() != null
@@ -1650,7 +1741,7 @@ public class InspectPanel extends PluginPanel
 	{
 		if (summary != null && (!summary.getMetRequirements().isEmpty() || !summary.getMissingRequirements().isEmpty()))
 		{
-			addFullWidth(section("Requirements"));
+			beginSection("requirements", "Requirements");
 			addFullWidth(itemRequirementsPanel(summary));
 			return;
 		}
@@ -1658,7 +1749,7 @@ public class InspectPanel extends PluginPanel
 		if (hasAny(info.getRequirementAttack(), info.getRequirementStrength(), info.getRequirementDefence(), info.getRequirementRanged(),
 			info.getRequirementMagic(), info.getRequirementPrayer(), info.getRequirementHitpoints(), info.getRequirementSlayer()))
 		{
-			addFullWidth(section("Requirements"));
+			beginSection("requirements", "Requirements");
 			addFullWidth(rows(nonEmptyRows(
 				"Attack", info.getRequirementAttack(),
 				"Strength", info.getRequirementStrength(),
@@ -1879,7 +1970,7 @@ public class InspectPanel extends PluginPanel
 	private void addCacheManagement()
 	{
 		cacheManagementVisible = true;
-		addFullWidth(section("Cache"));
+		beginSection("cache", "Cache");
 		JButton itemButton = panelButton("Clear item cache");
 		itemButton.addActionListener(event ->
 		{
@@ -2072,13 +2163,13 @@ public class InspectPanel extends PluginPanel
 		{
 			if (analysis.getComparisonMessage() != null && !analysis.getComparisonMessage().isEmpty())
 			{
-				addFullWidth(section("Compared to you"));
+				beginSection("selfComparison", "Compared to you");
 				addFullWidth(message(analysis.getComparisonMessage()));
 			}
 			return;
 		}
 
-		addFullWidth(section("Compared to you"));
+		beginSection("selfComparison", "Compared to you");
 		addFullWidth(playerComparisonTotal(analysis.getComparisons()));
 	}
 
@@ -2098,7 +2189,7 @@ public class InspectPanel extends PluginPanel
 		rows.add(deltaRow("Gear value", totalVisibleValue(equipment) - totalVisibleValue(pinnedInspects.getPlayerEquipment()), false));
 		rows.add(row("Same slots", Integer.toString(matchingEquipmentSlots(equipment, pinnedInspects.getPlayerEquipment()))));
 		rows.add(row("Different", differentEquipmentSlots(equipment, pinnedInspects.getPlayerEquipment())));
-		addFullWidth(section("Compared to player"));
+		beginSection("playerComparison", "Compared to player");
 		addFullWidth(rows(rows.toArray(new JPanel[0])));
 	}
 
@@ -2199,7 +2290,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Recent NPCs"));
+		beginSection("recentNpcs", "Recent NPCs");
 		addFullWidth(recentList(lastRecentNpcs, null, null));
 	}
 
@@ -2210,7 +2301,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Recent items"));
+		beginSection("recentItems", "Recent items");
 		addFullWidth(recentList(null, null, lastRecentItems));
 	}
 
@@ -2221,7 +2312,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Recent players"));
+		beginSection("recentPlayers", "Recent players");
 		addFullWidth(recentList(null, lastRecentPlayers, null));
 	}
 
@@ -2235,7 +2326,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Recent"));
+		beginSection("recent", "Recent");
 		addFullWidth(recentList(lastRecentNpcs, lastRecentPlayers, lastRecentItems));
 	}
 
@@ -2342,7 +2433,7 @@ public class InspectPanel extends PluginPanel
 			return;
 		}
 
-		addFullWidth(section("Compare"));
+		beginSection("pinnedComparisons", "Compare");
 		addFullWidth(pinnedTray());
 	}
 
@@ -2539,6 +2630,7 @@ public class InspectPanel extends PluginPanel
 	{
 		viewRevision++;
 		displayedNpcInfo = null;
+		displayedItemInfo = null;
 		if (restoreScrollPositionOnNextReset != null)
 		{
 			scrollPositionAfterRefresh = restoreScrollPositionOnNextReset;
@@ -2555,21 +2647,66 @@ public class InspectPanel extends PluginPanel
 			scrollPositionAfterRefresh = null;
 			scrollToTopAfterRefresh = true;
 		}
+		endSection();
 		removeAll();
 		cacheManagementVisible = false;
 		preserveScrollOnNextReset = false;
 		addSearchControls();
 		addTabControls();
+		addLayoutReset();
 		addPinnedTray();
+		endSection();
+	}
+
+	private void addLayoutReset()
+	{
+		JButton button = panelButton("Reset panel layout");
+		button.setToolTipText("Expand all sections across every tab and clear saved collapse choices. Keep the drop filter.");
+		button.addActionListener(event ->
+		{
+			panelPreferences.resetLayout();
+			// Update the current view in place, including loading/error views, without rerunning a lookup.
+			for (Component component : getComponents())
+			{
+				if (component instanceof CollapsibleSection)
+				{
+					((CollapsibleSection) component).setCollapsed(false);
+				}
+			}
+			revalidate();
+			repaint();
+		});
+		addFullWidth(button);
+	}
+
+	private void beginSection(String id, String title)
+	{
+		String key = activeTab.toLowerCase(Locale.ROOT) + "." + id;
+		currentSection = new CollapsibleSection(title, panelPreferences.isCollapsed(key),
+			collapsed -> panelPreferences.setCollapsed(key, collapsed));
+		add(currentSection);
+	}
+
+	private void endSection()
+	{
+		currentSection = null;
 	}
 
 	private void addFullWidth(Component component)
 	{
-		add(component);
+		if (currentSection == null)
+		{
+			add(component);
+		}
+		else
+		{
+			currentSection.addContent(component);
+		}
 	}
 
 	private void refresh()
 	{
+		endSection();
 		revalidate();
 		repaint();
 		if (scrollToTopAfterRefresh)
@@ -3033,19 +3170,6 @@ public class InspectPanel extends PluginPanel
 			.replace("+", "_")
 			.replace("%3A", ":");
 		return "https://oldschool.runescape.wiki/w/" + encodedPage;
-	}
-
-	private static JLabel section(String text)
-	{
-		JLabel label = new JLabel(text, SwingConstants.CENTER);
-		label.setOpaque(true);
-		label.setBackground(ColorScheme.MEDIUM_GRAY_COLOR);
-		label.setForeground(ColorScheme.BRAND_ORANGE);
-		label.setFont(FontManager.getRunescapeBoldFont());
-		label.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, 24));
-		label.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, 24));
-		label.setBorder(new EmptyBorder(4, 4, 4, 4));
-		return label;
 	}
 
 	private static JPanel rows(JPanel... rows)

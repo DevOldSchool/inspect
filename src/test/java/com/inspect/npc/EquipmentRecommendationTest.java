@@ -131,6 +131,55 @@ public class EquipmentRecommendationTest
 		assertFalse(recommendation.hasItems());
 	}
 
+	@Test
+	public void manyWeaponsCannotCrowdOutOtherSlotsAndBankRanksRestartPerSlot()
+	{
+		java.util.List<ItemInspectInfo> items = new java.util.ArrayList<>();
+		for (int id = 1; id <= 20; id++)
+		{
+			items.add(item(id, "Weapon " + id, "weapon", Integer.toString(100 + id), "10"));
+		}
+		items.add(item(30, "Helmet", " head ", "2", "1"));
+		items.add(item(31, "Gloves", "hands", "1", "1"));
+		items.add(item(32, "Boots", "feet", "1", "1"));
+		EquipmentRecommendation result = EquipmentRecommendation.fromBank(stabWeakNpc(), items, 3);
+		assertEquals(6, result.getItems().size());
+		assertEquals(3, result.getItemsBySlot().get("Weapon").size());
+		assertEquals(Arrays.asList("Weapon", "Head", "Hands", "Feet"),
+			new java.util.ArrayList<>(result.getItemsBySlot().keySet()));
+		assertEquals(Integer.valueOf(1), result.bankItemRanks().get(20));
+		assertEquals(Integer.valueOf(3), result.bankItemRanks().get(18));
+		assertEquals(Integer.valueOf(1), result.bankItemRanks().get(30));
+		assertEquals(Integer.valueOf(1), result.bankItemRanks().get(31));
+		assertEquals(Integer.valueOf(1), result.bankItemRanks().get(32));
+		assertFalse(result.itemIds().contains(17));
+	}
+
+	@Test
+	public void twoHandedWeaponsShareWeaponRanksAndUnknownSlotsAreExcluded()
+	{
+		EquipmentRecommendation result = EquipmentRecommendation.fromBank(stabWeakNpc(), Arrays.asList(
+			item(1, "Spear", "2h", "20", "10"),
+			item(2, "Sword", "Weapon", "10", "10"),
+			item(3, "Defender", "shield", "5", "0"),
+			item(4, "Not equipment", null, "99", "99"),
+			item(5, "Unknown equipment", "unknown", "99", "99")), 3);
+		assertEquals(3, result.getItems().size());
+		assertEquals(2, result.getItemsBySlot().get("Weapon").size());
+		assertTrue(result.getItemsBySlot().get("Weapon").get(0).isTwoHanded());
+		assertFalse(result.getItemsBySlot().get("Weapon").get(1).isTwoHanded());
+		assertEquals(Integer.valueOf(1), result.bankItemRanks().get(3));
+	}
+
+	@Test
+	public void tiesUseItemIdWhenNamesAndScoresMatch()
+	{
+		EquipmentRecommendation result = EquipmentRecommendation.fromBank(stabWeakNpc(), Arrays.asList(
+			item(2, "Sword", "Weapon", "10", "0"), item(1, "Sword", "Weapon", "10", "0")), 1);
+		assertEquals(1, result.getItems().get(0).getItemId());
+		assertEquals(result.getItems().get(0).getScore(), result.getItems().get(0).getBreakdown().getTotal(), 0.0);
+	}
+
 	private static NpcCombatInfo stabWeakNpc()
 	{
 		return NpcCombatInfo.builder()

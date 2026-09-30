@@ -13,10 +13,11 @@ Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the
 - **Recent inspections**: return to recent item, NPC, and player inspections from the sidebar.
 - **Equipment recommendations**: rank owned bank/equipped gear for inspected NPC weaknesses.
 - **Bank highlights**: highlight recommended bank items with rank indicators.
-- **Item prices**: show GE price, high alch, low alch, and high-alch profit or loss.
+- **Item prices**: show GE price, high alch, low alch, casting cost, and high-alch profit or loss after rune costs.
 - **Account-aware item sources**: show acquisition methods with local quest/skill readiness and prioritise currently usable methods for Ironman accounts.
 - **Requirement checks**: show item equip requirements and per-source quest/skill readiness from local account state.
 - **NPC required items**: show item requirements for monsters that need a finishing item, with inventory/equipment readiness checks.
+- **Saved panel preferences**: click a section heading to collapse or expand it. Choices are saved per tab in your RuneLite configuration profile, along with your preferred NPC drop filter. **Reset panel layout** below the tabs expands every section and clears saved collapse choices across all tabs, while keeping your drop filter. All sections start expanded.
 - **Drop filters**: filter NPC drops into useful categories like valuable, rare, Slayer-only, clue, Ironman, alchable, and upgrade materials.
 - **Compare tray**: save an NPC, item, or player inspection as the current comparison and reopen it from the sidebar.
 - **Slayer and drop summaries**: show NPC Slayer details, clickable Slayer master links, and drop-table information when available from the wiki.
@@ -24,6 +25,8 @@ Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the
 ## Item Inspect
 
 Item inspect shows wiki-backed item details, prices, requirements, sources, gear-role tags, bonuses, and comparison details where available.
+
+High-alch profit subtracts the item GE price and the GE cost of one nature rune plus five fire runes. Equipped fire, lava, steam, smoke, and Twinflame staves or a charged Tome of fire remove the fire-rune cost; inventory and bank items do not. The estimate updates when equipment changes. An uncharged tome does not supply fire runes. Missing rune prices leave the estimate unavailable. This is a standard-cast estimate, excluding random rune savings and free Explorer's ring casts.
 
 Searches for multi-version items show each exact variant with its item icon, version anchor, and game ID. Searches that already name a unique variant, such as `Dragon dagger(p++)`, open that variant directly.
 
@@ -44,6 +47,8 @@ Required items are grouped by condition. For example, gargoyles show the valid f
 Drop filters show one item per row, with item icons where RuneLite can resolve them. Rows with resolved item IDs can be right-clicked and inspected directly. The current filters are valuable, rare, Slayer-only, clue, Ironman, alchable, and upgrade.
 
 Slayer master tags open their OSRS Wiki pages.
+
+Equipment recommendations group up to three candidates per slot from your bank and equipped gear. Ranks restart within each slot, including the numbers highlighted in the bank. Each row shows the relevant bonuses and its score; hover the score or bonuses for the weighted calculation. Unknown stats appear as `?` and count as zero. The score uses accuracy + 1.5 × strength or magic damage percentage + 0.1 × Prayer, without attack speed, special effects or equipment requirements. Two-handed weapons share the Weapon group and are marked `(2h)`; shield candidates are alternatives, not a compatible loadout. Click an item name to inspect its details and requirements.
 
 ![NPC inspect example](images/npc.png)
 

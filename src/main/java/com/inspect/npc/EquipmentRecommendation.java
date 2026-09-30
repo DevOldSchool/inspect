@@ -5,6 +5,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Arrays;
+import java.util.Locale;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -15,6 +17,9 @@ import lombok.Value;
 @Value
 public class EquipmentRecommendation
 {
+	private static final List<String> SLOT_ORDER = Arrays.asList(
+		"Weapon", "Shield", "Head", "Cape", "Neck", "Body", "Legs", "Hands", "Feet", "Ring", "Ammo");
+
 	NpcCombatInfo npc;
 	CombatStyleRecommendation style;
 	List<RecommendedItem> items;
@@ -68,17 +73,17 @@ public class EquipmentRecommendation
 		return new EquipmentRecommendation(npc, CombatStyleRecommendation.forNpc(npc), Collections.emptyList());
 	}
 
-	static EquipmentRecommendation fromBank(NpcCombatInfo npc, Collection<ItemInspectInfo> bankItems, int limit)
+	static EquipmentRecommendation fromBank(NpcCombatInfo npc, Collection<ItemInspectInfo> bankItems, int limitPerSlot)
 	{
 		List<CandidateItem> candidates = new ArrayList<>();
 		for (ItemInspectInfo item : bankItems)
 		{
 			candidates.add(new CandidateItem(item, true, false));
 		}
-		return fromCandidates(npc, candidates, limit);
+		return fromCandidates(npc, candidates, limitPerSlot);
 	}
 
-	static EquipmentRecommendation fromCandidates(NpcCombatInfo npc, Collection<CandidateItem> candidates, int limit)
+	static EquipmentRecommendation fromCandidates(NpcCombatInfo npc, Collection<CandidateItem> candidates, int limitPerSlot)
 	{
 		CombatStyleRecommendation style = CombatStyleRecommendation.forNpc(npc);
 		if (style == null)
@@ -86,52 +91,86 @@ public class EquipmentRecommendation
 			return new EquipmentRecommendation(npc, null, Collections.emptyList());
 		}
 
-		List<RecommendedItem> recommendations = new ArrayList<>();
+		Map<String, List<RecommendedItem>> bySlot = new LinkedHashMap<>();
 		for (CandidateItem candidate : candidates)
 		{
 			ItemInspectInfo item = candidate.getInfo();
-			if (item == null || !style.isRelevant(item))
+			String slot = item == null ? null : normalizedSlot(item.getSlot());
+			if (item == null || slot == null)
 			{
 				continue;
 			}
-
-			recommendations.add(new RecommendedItem(
-				item.getItemId(),
-				item.getDisplayName(),
-				item.getSlot(),
-				style.score(item),
-				candidate.isInBank(),
-				candidate.isEquipped(),
-				0
-			));
+			EquipmentScore score = style.scoreBreakdown(item);
+			if (score.getTotal() <= 0 || !Double.isFinite(score.getTotal()))
+			{
+				continue;
+			}
+			bySlot.computeIfAbsent(slot, ignored -> new ArrayList<>()).add(new RecommendedItem(
+				item.getItemId(), item.getDisplayName(), slot, score.getTotal(), candidate.isInBank(),
+				candidate.isEquipped(), 0, score, isTwoHanded(item.getSlot())));
 		}
 
-		recommendations.sort(Comparator
-			.comparingDouble(RecommendedItem::getScore)
-			.reversed()
-			.thenComparing(RecommendedItem::getDisplayName, Comparator.nullsLast(String::compareToIgnoreCase)));
-
-		int boundedLimit = Math.max(0, limit);
-		if (recommendations.size() > boundedLimit)
+		List<RecommendedItem> recommendations = new ArrayList<>();
+		int boundedLimit = Math.max(0, limitPerSlot);
+		for (String slot : SLOT_ORDER)
 		{
-			recommendations = new ArrayList<>(recommendations.subList(0, boundedLimit));
-		}
-
-		for (int i = 0; i < recommendations.size(); i++)
-		{
-			RecommendedItem item = recommendations.get(i);
-			recommendations.set(i, new RecommendedItem(
-				item.getItemId(),
-				item.getDisplayName(),
-				item.getSlot(),
-				item.getScore(),
-				item.isInBank(),
-				item.isEquipped(),
-				i + 1
-			));
+			List<RecommendedItem> ranked = bySlot.getOrDefault(slot, Collections.emptyList());
+			ranked.sort(Comparator.comparingDouble(RecommendedItem::getScore).reversed()
+				.thenComparing(RecommendedItem::getDisplayName, Comparator.nullsLast(String::compareToIgnoreCase))
+				.thenComparingInt(RecommendedItem::getItemId));
+			for (int i = 0; i < Math.min(boundedLimit, ranked.size()); i++)
+			{
+				RecommendedItem item = ranked.get(i);
+				recommendations.add(new RecommendedItem(item.getItemId(), item.getDisplayName(), item.getSlot(),
+					item.getScore(), item.isInBank(), item.isEquipped(), i + 1, item.getBreakdown(), item.isTwoHanded()));
+			}
 		}
 
 		return new EquipmentRecommendation(npc, style, Collections.unmodifiableList(recommendations));
+	}
+
+	public Map<String, List<RecommendedItem>> getItemsBySlot()
+	{
+		Map<String, List<RecommendedItem>> groups = new LinkedHashMap<>();
+		if (items != null)
+		{
+			for (RecommendedItem item : items)
+			{
+				groups.computeIfAbsent(item.getSlot(), ignored -> new ArrayList<>()).add(item);
+			}
+		}
+		groups.replaceAll((slot, entries) -> Collections.unmodifiableList(entries));
+		return Collections.unmodifiableMap(groups);
+	}
+
+	private static boolean isTwoHanded(String slot)
+	{
+		String normalized = slot == null ? "" : slot.trim().toLowerCase(Locale.ROOT).replace('-', ' ');
+		return normalized.equals("2h") || normalized.equals("2 handed") || normalized.equals("two handed");
+	}
+
+	private static String normalizedSlot(String slot)
+	{
+		if (isTwoHanded(slot))
+		{
+			return "Weapon";
+		}
+		String normalized = slot == null ? "" : slot.trim().toLowerCase(Locale.ROOT);
+		switch (normalized)
+		{
+			case "head": return "Head";
+			case "cape": return "Cape";
+			case "neck": case "amulet": return "Neck";
+			case "weapon": return "Weapon";
+			case "body": case "torso": return "Body";
+			case "shield": return "Shield";
+			case "legs": return "Legs";
+			case "hands": case "gloves": return "Hands";
+			case "feet": case "boots": return "Feet";
+			case "ring": return "Ring";
+			case "ammo": case "ammunition": return "Ammo";
+			default: return null;
+		}
 	}
 
 	@Value
@@ -152,5 +191,7 @@ public class EquipmentRecommendation
 		boolean inBank;
 		boolean equipped;
 		int rank;
+		EquipmentScore breakdown;
+		boolean twoHanded;
 	}
 }

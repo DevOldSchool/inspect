@@ -10,4 +10,6 @@ public class ItemPriceSummary
 	String lowAlch;
 	String highAlchProfit;
 	Long highAlchProfitValue;
+	String castingCost;
+	String castingCostDescription;
 }
