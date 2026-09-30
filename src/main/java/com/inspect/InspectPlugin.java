@@ -1710,9 +1710,9 @@ public class InspectPlugin extends Plugin
 		}
 	}
 
-	private static int totalVisibleValue(List<PlayerEquipmentItem> equipment)
+	static long totalVisibleValue(List<PlayerEquipmentItem> equipment)
 	{
-		int total = 0;
+		long total = 0;
 		for (PlayerEquipmentItem item : equipment)
 		{
 			total += item.getPrice();
@@ -1720,7 +1720,7 @@ public class InspectPlugin extends Plugin
 		return total;
 	}
 
-	private static String formatCoins(int value)
+	private static String formatCoins(long value)
 	{
 		if (value <= 0)
 		{
@@ -1976,7 +1976,12 @@ public class InspectPlugin extends Plugin
 			return null;
 		}
 
-		int gePrice = Math.max(0, itemManager.getItemPrice(info.getItemId()));
+		return itemPriceSummary(info, itemManager.getItemPrice(info.getItemId()));
+	}
+
+	static ItemPriceSummary itemPriceSummary(ItemInspectInfo info, long itemPrice)
+	{
+		long gePrice = Math.max(0, itemPrice);
 		Integer highAlch = coinValue(info.getHighAlch());
 		Integer lowAlch = coinValue(info.getLowAlch());
 		Integer itemValue = coinValue(info.getValue());
@@ -1988,7 +1993,7 @@ public class InspectPlugin extends Plugin
 		{
 			lowAlch = (int) Math.floor(itemValue * 0.4d);
 		}
-		Integer profitValue = null;
+		Long profitValue = null;
 		String profit = null;
 		if (gePrice > 0 && highAlch != null)
 		{
@@ -2077,7 +2082,7 @@ public class InspectPlugin extends Plugin
 		}
 	}
 
-	private static String formatSignedCoins(int value)
+	private static String formatSignedCoins(long value)
 	{
 		if (value == 0)
 		{

@@ -9,5 +9,5 @@ public class ItemPriceSummary
 	String highAlch;
 	String lowAlch;
 	String highAlchProfit;
-	Integer highAlchProfitValue;
+	Long highAlchProfitValue;
 }

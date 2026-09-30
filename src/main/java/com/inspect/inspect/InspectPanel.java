@@ -1271,7 +1271,7 @@ public class InspectPanel extends PluginPanel
 
 	private static String highAlchProfitLabel(ItemPriceSummary priceSummary)
 	{
-		Integer value = priceSummary.getHighAlchProfitValue();
+		Long value = priceSummary.getHighAlchProfitValue();
 		if (value == null)
 		{
 			return "HA profit";
@@ -1289,7 +1289,7 @@ public class InspectPanel extends PluginPanel
 
 	private static Color highAlchProfitColor(ItemPriceSummary priceSummary)
 	{
-		Integer value = priceSummary.getHighAlchProfitValue();
+		Long value = priceSummary.getHighAlchProfitValue();
 		if (value == null || value == 0)
 		{
 			return ColorScheme.LIGHT_GRAY_COLOR;
@@ -2002,9 +2002,9 @@ public class InspectPanel extends PluginPanel
 		return bySlot;
 	}
 
-	private static int totalVisibleValue(List<PlayerEquipmentItem> equipment)
+	private static long totalVisibleValue(List<PlayerEquipmentItem> equipment)
 	{
-		int total = 0;
+		long total = 0;
 		if (equipment == null)
 		{
 			return total;
