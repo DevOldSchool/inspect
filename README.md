@@ -88,6 +88,8 @@ Player inspect uses locally visible client data only. It does not expose player 
 
 ## Development
 
+GitHub Actions builds and tests against the latest RuneLite release on pushes, pull requests, and daily at 20:23 UTC (06:23 Brisbane time). The CI workflow can also be run manually from the Actions tab. Scheduled runs use the default branch after the workflow is merged; check GitHub Actions notification settings to receive failure notifications. Failed runs retain test reports when available.
+
 Build and test:
 
 ```sh
