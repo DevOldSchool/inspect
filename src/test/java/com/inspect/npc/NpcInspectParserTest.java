@@ -11,6 +11,19 @@ public class NpcInspectParserTest
 	private final NpcInspectParser parser = new NpcInspectParser();
 
 	@Test
+	public void choicesRetainVariantImagesAndAllowMissingImages()
+	{
+		java.util.List<NpcCombatInfo> choices = parser.parseChoices(
+			new NpcWikiLookup("Guard", null, "https://oldschool.runescape.wiki/w/Guard"),
+			"{{Infobox Monster|name=Guard|version1=Edgeville|id1=10|image1=[[File:Guard Edgeville.png|120px]]"
+				+ "|version2=Falador|id2=11|image2=Guard Falador.png|version3=Varrock|id3=12}}");
+		assertEquals(3, choices.size());
+		assertEquals("Guard Edgeville.png", choices.get(0).getImageFile());
+		assertEquals("Guard Falador.png", choices.get(1).getImageFile());
+		assertNull(choices.get(2).getImageFile());
+	}
+
+	@Test
 	public void parsesVersionByNpcId()
 	{
 		NpcCombatInfo info = parser.parse(3046, "Goblin", new NpcWikiLookup("Goblin", "Level_13", "https://oldschool.runescape.wiki/w/Goblin#Level_13"), goblinWikitext());

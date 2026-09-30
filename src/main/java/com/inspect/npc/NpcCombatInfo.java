@@ -9,13 +9,14 @@ import lombok.Value;
 @Builder(toBuilder = true)
 public class NpcCombatInfo
 {
-	public static final int CACHE_SCHEMA_VERSION = 2;
+	public static final int CACHE_SCHEMA_VERSION = 3;
 
 	int npcId;
 	@Builder.Default
 	int cacheSchemaVersion = CACHE_SCHEMA_VERSION;
 	String wikiPage;
 	String wikiAnchor;
+	String imageFile;
 	String displayName;
 	String combatLevel;
 	String xpBonus;

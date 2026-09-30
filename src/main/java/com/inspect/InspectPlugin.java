@@ -21,6 +21,7 @@ import com.inspect.npc.NpcItemRequirement;
 import com.inspect.npc.NpcItemRequirementAlternativeStatus;
 import com.inspect.npc.NpcItemRequirementStatus;
 import com.inspect.npc.NpcInspectService;
+import com.inspect.npc.NpcThumbnailService;
 import com.inspect.player.PlayerEquipmentComparison;
 import com.inspect.player.PlayerEquipmentItem;
 import com.inspect.player.PlayerInspectAnalysis;
@@ -114,6 +115,9 @@ public class InspectPlugin extends Plugin
 	private NpcInspectService npcInspectService;
 
 	@Inject
+	private NpcThumbnailService npcThumbnailService;
+
+	@Inject
 	private ItemInspectService itemInspectService;
 
 	@Inject
@@ -154,6 +158,8 @@ public class InspectPlugin extends Plugin
 		inspectPanel.setItemInspectHandler(this::inspectPlayerEquipmentItem);
 		inspectPanel.setItemRefreshHandler(this::refreshItem);
 		inspectPanel.setNpcRefreshHandler(this::refreshNpc);
+		inspectPanel.setNpcChoiceHandler(this::inspectNpcChoice);
+		inspectPanel.setNpcThumbnailLoader(npcThumbnailService::getThumbnail);
 		inspectPanel.setPinnedInspectHandler(new InspectPanel.PinnedInspectHandler()
 		{
 			@Override
@@ -279,6 +285,7 @@ public class InspectPlugin extends Plugin
 		clientToolbar.addNavigation(inspectNavButton);
 		overlayManager.add(bankEquipmentOverlay);
 		npcInspectService.startUp(config.clearNpcInspectCacheOnStartup());
+		npcThumbnailService.startUp();
 		itemInspectService.startUp(config.clearNpcInspectCacheOnStartup());
 		addPlayerInspectMenuOptionIfEnabled();
 		log.debug("Inspect plugin started");
@@ -292,6 +299,7 @@ public class InspectPlugin extends Plugin
 		overlayManager.remove(bankEquipmentOverlay);
 		bankEquipmentOverlay.clear();
 		npcInspectService.shutDown();
+		npcThumbnailService.shutDown();
 		itemInspectService.shutDown();
 		inspectPanel = null;
 		inspectNavButton = null;
@@ -401,6 +409,15 @@ public class InspectPlugin extends Plugin
 		if (!CONFIG_GROUP.equals(event.getGroup()))
 		{
 			return;
+		}
+
+		if ("enableWikiLookups".equals(event.getKey()))
+		{
+			npcThumbnailService.shutDown();
+			if (config.enableWikiLookups())
+			{
+				npcThumbnailService.startUp();
+			}
 		}
 
 		if ("showPlayerEquipmentInspectOption".equals(event.getKey()))
@@ -958,32 +975,87 @@ public class InspectPlugin extends Plugin
 		}
 
 		final String lookupQuery = resolvedQuery;
-		SwingUtilities.invokeLater(() -> inspectPanel.showSearchLoading(type, lookupQuery));
 		if ("NPC".equals(type))
 		{
-			npcInspectService.search(lookupQuery, config.npcInspectCacheTtlDays())
-				.whenComplete((info, throwable) -> SwingUtilities.invokeLater(() ->
-				{
-					if (throwable != null)
-					{
-						log.debug("NPC Inspect search failed for {}", lookupQuery, throwable);
-						inspectPanel.showSearchError(type, lookupQuery);
-						return;
-					}
-
-					if (info == null)
-					{
-						inspectPanel.showSearchNotFound(type, lookupQuery);
-						return;
-					}
-
-					addRecent(recentNpcInspects, info.getDisplayName() == null ? lookupQuery : info.getDisplayName());
-					showNpcInfoWithLocalChecks(info, false);
-				}));
+			SwingUtilities.invokeLater(() -> searchNpcChoices(lookupQuery));
 			return;
 		}
 
+		SwingUtilities.invokeLater(() -> inspectPanel.showSearchLoading(type, lookupQuery));
 		searchItemVariants(lookupQuery);
+	}
+
+	private void searchNpcChoices(String query)
+	{
+		InspectPanel panel = inspectPanel;
+		if (panel == null || !config.enableWikiLookups() || !config.showInspectSearch())
+		{
+			return;
+		}
+		panel.showSearchLoading("NPC", query);
+		long revision = panel.getViewRevision();
+		npcInspectService.searchChoices(query, config.npcInspectCacheTtlDays())
+			.whenComplete((results, error) -> SwingUtilities.invokeLater(() ->
+			{
+				if (inspectPanel != panel || panel.getViewRevision() != revision)
+				{
+					return;
+				}
+				if (error != null)
+				{
+					log.debug("NPC search failed for {}", query, error);
+					panel.showSearchError("NPC", query);
+				}
+				else if (results.getChoices().isEmpty())
+				{
+					panel.showSearchNotFound("NPC", query);
+				}
+				else if (results.getChoices().size() == 1 && !results.isPartial())
+				{
+					inspectNpcChoice(results.getChoices().get(0));
+				}
+				else
+				{
+					panel.showNpcChoices(results);
+				}
+			}));
+	}
+
+	private void inspectNpcChoice(NpcCombatInfo choice)
+	{
+		InspectPanel panel = inspectPanel;
+		if (panel == null)
+		{
+			return;
+		}
+		if (!config.enableWikiLookups() || !config.showInspectSearch())
+		{
+			panel.showSearchDisabled("Enable OSRS Wiki lookups and Inspect search to inspect this result.");
+			return;
+		}
+		panel.showLoading(choice.getDisplayName());
+		long revision = panel.getViewRevision();
+		npcInspectService.inspectChoice(choice, config.npcInspectCacheTtlDays())
+			.whenComplete((info, error) -> SwingUtilities.invokeLater(() ->
+			{
+				if (inspectPanel != panel || panel.getViewRevision() != revision)
+				{
+					return;
+				}
+				if (error != null)
+				{
+					panel.showSearchError("NPC", choice.getDisplayName());
+				}
+				else if (info == null)
+				{
+					panel.showNotFound(choice.getDisplayName());
+				}
+				else
+				{
+					addRecent(recentNpcInspects, info.getDisplayName());
+					showNpcInfoWithLocalChecks(info, true, panel, revision);
+				}
+			}));
 	}
 
 	private void searchItemVariants(String query)
@@ -1235,12 +1307,21 @@ public class InspectPlugin extends Plugin
 
 	private void showNpcInfoWithLocalChecks(NpcCombatInfo info, boolean clearBankOverlay)
 	{
+		showNpcInfoWithLocalChecks(info, clearBankOverlay, inspectPanel, -1);
+	}
+
+	private void showNpcInfoWithLocalChecks(NpcCombatInfo info, boolean clearBankOverlay, InspectPanel panel, long revision)
+	{
 		clientThread.invokeLater(() ->
 		{
 			List<NpcItemRequirementStatus> itemRequirementStatuses = npcItemRequirementStatuses(info);
 			Map<String, Integer> dropItemIds = npcDropItemIds(info);
 			SwingUtilities.invokeLater(() ->
 			{
+				if (panel == null || inspectPanel != panel || (revision >= 0 && panel.getViewRevision() != revision))
+				{
+					return;
+				}
 				if (clearBankOverlay)
 				{
 					bankEquipmentOverlay.clear();
@@ -1508,7 +1589,7 @@ public class InspectPlugin extends Plugin
 
 	private void refreshCurrentNpcItemRequirements()
 	{
-		if (inspectPanel == null || !inspectPanel.isNpcActive()
+		if (inspectPanel == null || !inspectPanel.isShowingNpc(currentNpcInfo)
 			|| currentNpcInfo == null || currentNpcInfo.getItemRequirements() == null || currentNpcInfo.getItemRequirements().isEmpty())
 		{
 			return;
@@ -1521,7 +1602,7 @@ public class InspectPlugin extends Plugin
 		List<NpcItemRequirementStatus> itemRequirementStatuses = npcItemRequirementStatuses(info);
 		SwingUtilities.invokeLater(() ->
 		{
-			if (inspectPanel != null && inspectPanel.isNpcActive() && currentNpcInfo == info)
+			if (inspectPanel != null && inspectPanel.isShowingNpc(info) && currentNpcInfo == info)
 			{
 				inspectPanel.refreshNpcInfo(
 					info,

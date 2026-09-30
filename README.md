@@ -37,6 +37,8 @@ The Requirements section reports item equip/use readiness separately. Local skil
 
 NPC inspect shows combat stats, weakness summaries, Slayer details, required items, drop filters, a lightweight kill checklist, and equipment recommendations.
 
+NPC searches offer matching variants from up to five wiki pages, with combat level, version/location label where the wiki supplies one, page title, and game ID. A single complete result opens directly; multiple results let you choose the exact NPC. Searches show at most 50 variants, so use a more specific query if needed. Non-monster pages and historical-only IDs are excluded. Partial wiki failures are labelled and can be retried by searching again. Complete searches are cached across restarts, with labelled saved results available during outages.
+
 Required items are grouped by condition. For example, gargoyles show the valid finishing items as alternatives, with each row marked as missing, in inventory, or equipped. The check refreshes when inventory or equipment changes.
 
 Drop filters show one item per row, with item icons where RuneLite can resolve them. Rows with resolved item IDs can be right-clicked and inspected directly. The current filters are valuable, rare, Slayer-only, clue, Ironman, alchable, and upgrade.

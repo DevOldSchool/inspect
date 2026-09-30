@@ -154,6 +154,83 @@ class NpcInspectCache
 		}, executor);
 	}
 
+	CompletableFuture<Optional<NpcSearchResults>> getSearchResults(String query)
+	{
+		return CompletableFuture.supplyAsync(() ->
+		{
+			Path path = searchPath(query);
+			if (!Files.isRegularFile(path))
+			{
+				return Optional.empty();
+			}
+			try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8))
+			{
+				NpcSearchResults results = gson.fromJson(reader, NpcSearchResults.class);
+				if (results == null || !normalizeSearchTerm(query).equals(normalizeSearchTerm(results.getQuery()))
+					|| results.getChoices() == null || results.getChoices().size() > 50
+					|| results.getFetchedAtEpochSecond() <= 0 || results.isPartial())
+				{
+					return Optional.empty();
+				}
+				for (NpcCombatInfo info : results.getChoices())
+				{
+					if (info == null || !info.hasCurrentCacheSchema() || info.getNpcId() < 0
+						|| info.getWikiPage() == null || info.getSourceUrl() == null)
+					{
+						return Optional.empty();
+					}
+				}
+				return Optional.of(results);
+			}
+			catch (IOException | RuntimeException ex)
+			{
+				log.debug("Unable to read NPC search cache", ex);
+				return Optional.empty();
+			}
+		}, executor);
+	}
+
+	CompletableFuture<Void> putSearchResults(NpcSearchResults results)
+	{
+		return CompletableFuture.runAsync(() ->
+		{
+			try
+			{
+				Files.createDirectories(cacheDirectory);
+				Path path = searchPath(results.getQuery());
+				Path temp = path.resolveSibling(path.getFileName() + ".tmp");
+				try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8))
+				{
+					gson.toJson(results, writer);
+				}
+				Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			}
+			catch (IOException ex)
+			{
+				log.debug("Unable to write NPC search cache", ex);
+			}
+		}, executor);
+	}
+
+	private Path searchPath(String query)
+	{
+		try
+		{
+			byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+				.digest(normalizeSearchTerm(query).getBytes(StandardCharsets.UTF_8));
+			StringBuilder key = new StringBuilder("search-");
+			for (byte value : digest)
+			{
+				key.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+			}
+			return cacheDirectory.resolve(key + ".json");
+		}
+		catch (java.security.NoSuchAlgorithmException ex)
+		{
+			throw new IllegalStateException("SHA-256 is unavailable", ex);
+		}
+	}
+
 	private Optional<NpcCombatInfo> readFromDisk(int npcId, long nowEpochSecond, int ttlDays, boolean includeExpired)
 	{
 		try

@@ -7,7 +7,14 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import javax.annotation.Nonnull;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -111,6 +118,73 @@ public class NpcInspectService
 		return search(query, 7);
 	}
 
+	public CompletableFuture<NpcSearchResults> searchChoices(String query, int ttlDays)
+	{
+		if (query == null || query.trim().isEmpty())
+		{
+			return CompletableFuture.completedFuture(new NpcSearchResults("", Collections.emptyList(), 0, false));
+		}
+		String normalized = query.trim();
+		long now = System.currentTimeMillis() / 1000L;
+		return cache.getSearchResults(normalized).thenCompose(cached -> WikiCacheLookup.load(cached,
+			results -> !results.isExpired(now, ttlDays), () -> fetchSearchChoices(normalized), NpcSearchResults::asFallback));
+	}
+
+	public CompletableFuture<NpcCombatInfo> inspectChoice(NpcCombatInfo choice, int ttlDays)
+	{
+		long now = System.currentTimeMillis() / 1000L;
+		return cache.get(choice.getNpcId(), now, ttlDays, true).thenCompose(cached ->
+		{
+			NpcCombatInfo selected = cached.filter(info -> info.cacheKey().equals(choice.cacheKey())
+				&& info.getFetchedAtEpochSecond() > choice.getFetchedAtEpochSecond()).orElse(choice);
+			if (selected.isCachedFallback() || selected.isExpired(now, ttlDays))
+			{
+				return refresh(selected);
+			}
+			return cache.put(selected).thenApply(ignored -> selected);
+		});
+	}
+
+	private CompletableFuture<NpcSearchResults> fetchSearchChoices(String query)
+	{
+		return searchPages(query, 5).thenCompose(pages ->
+		{
+			List<CompletableFuture<List<NpcCombatInfo>>> lookups = new ArrayList<>();
+			for (String page : pages)
+			{
+				NpcWikiLookup lookup = new NpcWikiLookup(page, null, wikiUrl(page, null));
+				lookups.add(fetchWikitext(lookup).thenApply(text -> parser.parseChoices(lookup, text)));
+			}
+			return CompletableFuture.allOf(lookups.toArray(new CompletableFuture<?>[0])).handle((ignored, error) ->
+			{
+				Map<String, NpcCombatInfo> choices = new LinkedHashMap<>();
+				boolean partial = false;
+				for (CompletableFuture<List<NpcCombatInfo>> lookup : lookups)
+				{
+					if (lookup.isCompletedExceptionally())
+					{
+						partial = true;
+						continue;
+					}
+					for (NpcCombatInfo info : lookup.join())
+					{
+						if (choices.size() < 50)
+						{
+							choices.putIfAbsent(info.cacheKey(), info);
+						}
+					}
+				}
+				if (choices.isEmpty() && error != null)
+				{
+					throw error instanceof CompletionException ? (CompletionException) error : new CompletionException(error);
+				}
+				return new NpcSearchResults(query, new ArrayList<>(choices.values()), System.currentTimeMillis() / 1000L, partial);
+			});
+		}).thenCompose(results -> results.isPartial()
+			? CompletableFuture.completedFuture(results)
+			: cache.putSearchResults(results).thenApply(ignored -> results));
+	}
+
 	public CompletableFuture<NpcCombatInfo> search(String query, int ttlDays)
 	{
 		if (query == null || query.trim().isEmpty())
@@ -184,13 +258,18 @@ public class NpcInspectService
 
 	private CompletableFuture<String> searchPage(String query)
 	{
+		return searchPages(query, 1).thenApply(pages -> pages.isEmpty() ? null : pages.get(0));
+	}
+
+	private CompletableFuture<List<String>> searchPages(String query, int limit)
+	{
 		HttpUrl url = wikiBase.newBuilder()
 			.addPathSegment("api.php")
 			.addQueryParameter("action", "query")
 			.addQueryParameter("format", "json")
 			.addQueryParameter("list", "search")
 			.addQueryParameter("srnamespace", "0")
-			.addQueryParameter("srlimit", "1")
+			.addQueryParameter("srlimit", Integer.toString(limit))
 			.addQueryParameter("srsearch", query)
 			.build();
 
@@ -212,9 +291,22 @@ public class NpcInspectService
 				JsonArray search = json.getAsJsonObject("query").getAsJsonArray("search");
 				if (search == null || search.size() == 0)
 				{
-					return null;
+					return Collections.emptyList();
 				}
-				return search.get(0).getAsJsonObject().get("title").getAsString();
+				LinkedHashSet<String> pages = new LinkedHashSet<>();
+				for (JsonElement result : search)
+				{
+					String page = normalizedPageTitle(firstString(result.getAsJsonObject(), "title"));
+					if (page != null)
+					{
+						pages.add(page);
+					}
+					if (pages.size() >= limit)
+					{
+						break;
+					}
+				}
+				return new ArrayList<>(pages);
 			}
 			catch (IOException ex)
 			{

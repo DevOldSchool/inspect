@@ -15,6 +15,7 @@ import com.inspect.item.ItemSourceReadinessEvaluator;
 import com.inspect.item.ItemSourceRequirement;
 import com.inspect.npc.EquipmentRecommendation;
 import com.inspect.npc.NpcCombatInfo;
+import com.inspect.npc.NpcSearchResults;
 import com.inspect.npc.NpcItemRequirement;
 import com.inspect.npc.NpcItemRequirementAlternativeStatus;
 import com.inspect.npc.NpcItemRequirementStatus;
@@ -827,6 +828,78 @@ public class InspectPanelTest
 		assertTrue(snapshot.text.contains("+45000"));
 		assertTrue(snapshot.text.contains("Different"));
 		assertTrue(snapshot.text.contains("Weapon"));
+	}
+
+	@Test
+	public void npcPickerLoadsThumbnailWithoutBlockingSelection() throws Exception
+	{
+		java.util.concurrent.CompletableFuture<java.awt.image.BufferedImage> loaded = new java.util.concurrent.CompletableFuture<>();
+		AtomicReference<NpcCombatInfo> selected = new AtomicReference<>();
+		InspectPanel panel = onEdt(() ->
+		{
+			InspectPanel result = new InspectPanel(null, null);
+			result.setNpcThumbnailLoader(file ->
+			{
+				assertEquals("Guard.png", file);
+				return loaded;
+			});
+			result.setNpcChoiceHandler(selected::set);
+			NpcCombatInfo choice = NpcCombatInfo.builder().npcId(10).wikiPage("Guard").displayName("Guard")
+				.imageFile("Guard.png").build();
+			result.showNpcChoices(new NpcSearchResults("guard", Collections.singletonList(choice), 1000L, false));
+			clickButton(result, "Guard");
+			assertEquals(choice, selected.get());
+			return result;
+		});
+		loaded.complete(new java.awt.image.BufferedImage(38, 38, java.awt.image.BufferedImage.TYPE_INT_ARGB));
+		onEdt(() ->
+		{
+			java.awt.Container row = findButton(panel, "Guard").getParent();
+			JLabel icon = (JLabel) row.getComponent(0);
+			assertEquals(38, icon.getIcon().getIconWidth());
+			assertEquals("", icon.getText());
+			return null;
+		});
+	}
+
+	@Test
+	public void npcPickerShowsVariantContextAndSelectsExactResult() throws Exception
+	{
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo first = NpcCombatInfo.builder().npcId(10).wikiPage("Guard").displayName("Guard")
+				.wikiAnchor("Varrock").combatLevel("21").build();
+			NpcCombatInfo second = NpcCombatInfo.builder().npcId(11).wikiPage("Guard").displayName("Guard")
+				.wikiAnchor("Falador (sword, ornate armour)").combatLevel("22").cachedFallback(true).build();
+			AtomicReference<NpcCombatInfo> selected = new AtomicReference<>();
+			panel.setNpcChoiceHandler(selected::set);
+			panel.showInfo(first, null, null, Collections.emptyList());
+			assertTrue(panel.isShowingNpc(first));
+			panel.showNpcChoices(new NpcSearchResults("guard", Arrays.asList(first, second), 1000L, true));
+			assertFalse(panel.isShowingNpc(first));
+			UiSnapshot snapshot = UiSnapshot.capture(panel);
+			assertTrue(snapshot.text.contains("Choose NPC"));
+			assertTrue(snapshot.text.contains("Varrock"));
+			assertTrue(snapshot.text.contains("Falador"));
+			assertTrue(snapshot.text.contains("Combat 22"));
+			assertTrue(snapshot.text.contains("ID 11"));
+			assertTrue(snapshot.text.contains("may be incomplete"));
+			assertTrue(snapshot.text.contains("Showing saved data"));
+			assertEquals(46, findButton(panel, "Guard - Falador (sword, ornate armour)").getParent().getPreferredSize().height);
+			clickButton(panel, "Guard - Falador (sword, ornate armour)");
+			assertEquals(second, selected.get());
+			java.awt.Container row = findButton(panel, "Guard - Falador (sword, ornate armour)").getParent();
+			row.setSize(row.getPreferredSize());
+			row.doLayout();
+			assertTrue(row.getComponent(0).getX() >= 0);
+			assertTrue(row.getComponent(1).getWidth() > 0);
+			assertTrue(row.getComponent(1).getX() + row.getComponent(1).getWidth() <= row.getWidth());
+			long revision = panel.getViewRevision();
+			panel.showItemLoading("Another item");
+			assertTrue(panel.getViewRevision() > revision);
+			return null;
+		});
 	}
 
 	@Test
