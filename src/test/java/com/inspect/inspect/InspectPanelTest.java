@@ -15,6 +15,7 @@ import com.inspect.item.ItemSourceReadinessEvaluator;
 import com.inspect.item.ItemSourceRequirement;
 import com.inspect.npc.EquipmentRecommendation;
 import com.inspect.npc.NpcCombatInfo;
+import com.inspect.npc.NpcSearchResults;
 import com.inspect.npc.NpcItemRequirement;
 import com.inspect.npc.NpcItemRequirementAlternativeStatus;
 import com.inspect.npc.NpcItemRequirementStatus;
@@ -827,6 +828,39 @@ public class InspectPanelTest
 		assertTrue(snapshot.text.contains("+45000"));
 		assertTrue(snapshot.text.contains("Different"));
 		assertTrue(snapshot.text.contains("Weapon"));
+	}
+
+	@Test
+	public void npcPickerShowsVariantContextAndSelectsExactResult() throws Exception
+	{
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo first = NpcCombatInfo.builder().npcId(10).wikiPage("Guard").displayName("Guard")
+				.wikiAnchor("Varrock").combatLevel("21").build();
+			NpcCombatInfo second = NpcCombatInfo.builder().npcId(11).wikiPage("Guard").displayName("Guard")
+				.wikiAnchor("Falador").combatLevel("22").cachedFallback(true).build();
+			AtomicReference<NpcCombatInfo> selected = new AtomicReference<>();
+			panel.setNpcChoiceHandler(selected::set);
+			panel.showInfo(first, null, null, Collections.emptyList());
+			assertTrue(panel.isShowingNpc(first));
+			panel.showNpcChoices(new NpcSearchResults("guard", Arrays.asList(first, second), 1000L, true));
+			assertFalse(panel.isShowingNpc(first));
+			UiSnapshot snapshot = UiSnapshot.capture(panel);
+			assertTrue(snapshot.text.contains("Choose NPC"));
+			assertTrue(snapshot.text.contains("Varrock"));
+			assertTrue(snapshot.text.contains("Falador"));
+			assertTrue(snapshot.text.contains("Combat: 22"));
+			assertTrue(snapshot.text.contains("ID: 11"));
+			assertTrue(snapshot.text.contains("may be incomplete"));
+			assertTrue(snapshot.text.contains("Showing saved data"));
+			clickButton(panel, "<html>Guard - Falador<br>Combat: 22 | ID: 11<br>Guard</html>");
+			assertEquals(second, selected.get());
+			long revision = panel.getViewRevision();
+			panel.showItemLoading("Another item");
+			assertTrue(panel.getViewRevision() > revision);
+			return null;
+		});
 	}
 
 	@Test

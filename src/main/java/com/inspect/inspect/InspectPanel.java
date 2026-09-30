@@ -11,6 +11,7 @@ import com.inspect.item.ItemSourceStatus;
 import com.inspect.npc.CombatStyleRecommendation;
 import com.inspect.npc.EquipmentRecommendation;
 import com.inspect.npc.NpcCombatInfo;
+import com.inspect.npc.NpcSearchResults;
 import com.inspect.npc.NpcItemRequirementAlternativeStatus;
 import com.inspect.npc.NpcItemRequirementStatus;
 import com.inspect.player.PlayerEquipmentComparison;
@@ -94,6 +95,11 @@ public class InspectPanel extends PluginPanel
 	private java.util.function.Consumer<ItemInspectInfo> itemRefreshHandler;
 	@Setter
 	private java.util.function.Consumer<NpcCombatInfo> npcRefreshHandler;
+	@Setter
+	private java.util.function.Consumer<NpcCombatInfo> npcChoiceHandler;
+	@lombok.Getter
+	private long viewRevision;
+	private NpcCombatInfo displayedNpcInfo;
 	private String activeTab = "Item";
 	private String activeDropFilter = "Valuable";
 	private PinnedInspectState pinnedInspects = PinnedInspectState.empty();
@@ -112,6 +118,11 @@ public class InspectPanel extends PluginPanel
 	private Point restoreScrollPositionOnNextReset;
 	private Point storedNpcScrollPosition;
 	private boolean cacheManagementVisible;
+
+	public boolean isShowingNpc(NpcCombatInfo info)
+	{
+		return info != null && displayedNpcInfo == info;
+	}
 
 	@Inject
 	public InspectPanel(SpriteManager spriteManager, ItemManager itemManager)
@@ -208,6 +219,45 @@ public class InspectPanel extends PluginPanel
 		Runnable renderer = () -> renderItemVariantPicker(query, choices);
 		lastItemRenderer = renderer;
 		renderer.run();
+	}
+
+	public void showNpcChoices(NpcSearchResults results)
+	{
+		lastNpcRenderer = () -> renderNpcChoices(results);
+		renderNpcChoices(results);
+	}
+
+	private void renderNpcChoices(NpcSearchResults results)
+	{
+		activeTab = "NPC";
+		lastSearchType = "NPC";
+		lastSearchText = results.getQuery();
+		reset();
+		addFullWidth(searchTitle("Choose NPC"));
+		addFullWidth(message("Matches from up to 5 wiki pages (maximum 50 variants). Refine your search if needed."));
+		if (results.isPartial())
+		{
+			addFullWidth(message("Some wiki pages could not be loaded. These results may be incomplete; try searching again."));
+		}
+		boolean fallback = results.getChoices().stream().anyMatch(NpcCombatInfo::isCachedFallback);
+		addFreshness(results.getFetchedAtEpochSecond(), fallback, "NPC", null);
+		for (NpcCombatInfo choice : results.getChoices())
+		{
+			String variant = choice.getWikiAnchor() == null ? "" : " - " + choice.getWikiAnchor().replace('_', ' ');
+			JButton button = panelButton("<html>" + escape(valueOrDash(choice.getDisplayName()) + variant)
+				+ "<br>Combat: " + escape(valueOrDash(choice.getCombatLevel())) + " | ID: " + choice.getNpcId()
+				+ "<br>" + escape(choice.getWikiPage().replace('_', ' ')) + "</html>");
+			button.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, 70));
+			button.addActionListener(event ->
+			{
+				if (npcChoiceHandler != null)
+				{
+					npcChoiceHandler.accept(choice);
+				}
+			});
+			addFullWidth(button);
+		}
+		refresh();
 	}
 
 	private void renderItemVariantPicker(String query, List<ItemInspectVariant> variants)
@@ -444,6 +494,7 @@ public class InspectPanel extends PluginPanel
 	{
 		activeTab = "NPC";
 		reset();
+		displayedNpcInfo = info;
 		addFullWidth(title(info.valueOrDash(info.getDisplayName())));
 		addPinNpcButton(info);
 		addFreshness(info.getFetchedAtEpochSecond(), info.isCachedFallback(), "NPC",
@@ -2452,6 +2503,8 @@ public class InspectPanel extends PluginPanel
 
 	private void reset()
 	{
+		viewRevision++;
+		displayedNpcInfo = null;
 		if (restoreScrollPositionOnNextReset != null)
 		{
 			scrollPositionAfterRefresh = restoreScrollPositionOnNextReset;

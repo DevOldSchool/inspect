@@ -36,6 +36,52 @@ class NpcInspectParser
 		{
 			return null;
 		}
+		return parseFieldsInfo(npcId, fallbackName, lookup, wikitext, fields, suffix);
+	}
+
+	List<NpcCombatInfo> parseChoices(NpcWikiLookup page, String wikitext)
+	{
+		Map<String, NpcCombatInfo> choices = new LinkedHashMap<>();
+		for (String infobox : extractInfoboxes(wikitext))
+		{
+			Map<String, String> fields = parseFields(infobox);
+			Set<String> suffixes = new LinkedHashSet<>();
+			for (String key : fields.keySet())
+			{
+				if (key.matches("version\\d+") || key.matches("id\\d+"))
+				{
+					suffixes.add(key.replaceFirst("^(version|id)", ""));
+				}
+			}
+			if (suffixes.isEmpty())
+			{
+				suffixes.add("");
+			}
+			for (String suffix : suffixes)
+			{
+				int id = parseFirstId(value(fields, "id", suffix, null));
+				if (id < 0)
+				{
+					continue;
+				}
+				String anchor = value(fields, "version", suffix, null);
+				anchor = anchor == null || anchor.isEmpty() ? null : anchor.replace(' ', '_');
+				String url = okhttp3.HttpUrl.get(page.getSourceUrl()).newBuilder().fragment(anchor).build().toString();
+				NpcCombatInfo info = parseFieldsInfo(id, page.getPage().replace('_', ' '),
+					new NpcWikiLookup(page.getPage(), anchor, url), wikitext, fields, suffix);
+				choices.putIfAbsent(info.cacheKey(), info);
+				if (choices.size() >= 50)
+				{
+					return new ArrayList<>(choices.values());
+				}
+			}
+		}
+		return new ArrayList<>(choices.values());
+	}
+
+	private NpcCombatInfo parseFieldsInfo(int npcId, String fallbackName, NpcWikiLookup lookup,
+		String wikitext, Map<String, String> fields, String suffix)
+	{
 		int resolvedNpcId = npcId >= 0 ? npcId : parseFirstId(value(fields, "id", suffix, null));
 
 		return NpcCombatInfo.builder()
@@ -143,15 +189,29 @@ class NpcInspectParser
 
 	private static Map<String, String> matchingFields(int npcId, String anchor, String wikitext)
 	{
+		List<Map<String, String>> candidates = new ArrayList<>();
 		for (String infobox : extractInfoboxes(wikitext))
 		{
 			Map<String, String> fields = parseFields(infobox);
-			if (selectVersionSuffix(npcId, anchor, fields) != null)
+			if (selectVersionSuffixByAnchor(anchor, fields) != null)
 			{
 				return fields;
 			}
+			candidates.add(fields);
 		}
-		return null;
+		for (Map<String, String> fields : candidates)
+		{
+			for (Map.Entry<String, String> entry : fields.entrySet())
+			{
+				if (entry.getKey().matches("id\\d*")
+					&& java.util.Arrays.asList(entry.getValue().replace(" ", "").split(",")).contains(Integer.toString(npcId)))
+				{
+					return fields;
+				}
+			}
+		}
+		return candidates.size() == 1 || (npcId < 0 && anchor == null && !candidates.isEmpty())
+			? candidates.get(0) : null;
 	}
 
 	private static List<String> extractInfoboxes(String wikitext)
@@ -203,6 +263,11 @@ class NpcInspectParser
 
 	private static String selectVersionSuffix(int npcId, String anchor, Map<String, String> fields)
 	{
+		String exactAnchorSuffix = selectVersionSuffixByAnchor(anchor, fields);
+		if (exactAnchorSuffix != null)
+		{
+			return exactAnchorSuffix;
+		}
 		if (npcId < 0)
 		{
 			String anchorSuffix = selectVersionSuffixByAnchor(anchor, fields);
