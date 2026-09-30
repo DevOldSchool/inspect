@@ -91,8 +91,8 @@ import net.runelite.http.api.item.ItemPrice;
 @Slf4j
 @PluginDescriptor(
 	name = "Inspect",
-	description = "Enhances OSRS gameplay with optional inspect information tools.",
-	tags = {"npc", "item", "equipment", "inspect", "wiki"}
+	description = "Inspect player gear, NPC weaknesses and item stats. Compare equipment and find useful gear in your bank.",
+	tags = {"item", "npc", "player", "equipment", "gear", "bank", "slayer", "drops", "compare", "ironman", "wiki"}
 )
 public class InspectPlugin extends Plugin
 {
