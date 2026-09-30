@@ -90,6 +90,10 @@ public class InspectPanel extends PluginPanel
     private CacheManagementHandler cacheManagementHandler;
 	@Setter
 	private PinnedInspectHandler pinnedInspectHandler;
+	@Setter
+	private java.util.function.Consumer<ItemInspectInfo> itemRefreshHandler;
+	@Setter
+	private java.util.function.Consumer<NpcCombatInfo> npcRefreshHandler;
 	private String activeTab = "Item";
 	private String activeDropFilter = "Valuable";
 	private PinnedInspectState pinnedInspects = PinnedInspectState.empty();
@@ -442,6 +446,8 @@ public class InspectPanel extends PluginPanel
 		reset();
 		addFullWidth(title(info.valueOrDash(info.getDisplayName())));
 		addPinNpcButton(info);
+		addFreshness(info.getFetchedAtEpochSecond(), info.isCachedFallback(), "NPC",
+			npcRefreshHandler == null ? null : () -> npcRefreshHandler.accept(info));
 		addFullWidth(section("Combat info"));
 		addFullWidth(rows(
 			row("Combat level", info.getCombatLevel()),
@@ -547,6 +553,8 @@ public class InspectPanel extends PluginPanel
 		reset();
 		addFullWidth(title(valueOrDash(info.getDisplayName())));
 		addPinItemButton(info);
+		addFreshness(info.getFetchedAtEpochSecond(), info.isCachedFallback(), "item",
+			itemRefreshHandler == null ? null : () -> itemRefreshHandler.accept(info));
 		addFullWidth(section("Item info"));
 		addFullWidth(grid(new StatCell[]{
 			itemCell("Item", info.getItemId(), "")
@@ -1241,6 +1249,28 @@ public class InspectPanel extends PluginPanel
 
 		addFullWidth(section("Compared to item"));
 		addFullWidth(rows(comparisonRows.toArray(new JPanel[0])));
+	}
+
+	private void addFreshness(long fetchedAt, boolean fallback, String type, Runnable refreshAction)
+	{
+		String fetched = fetchedAt <= 0 ? "Unknown" : java.time.format.DateTimeFormatter
+			.ofPattern("d MMM yyyy HH:mm z", Locale.ENGLISH)
+			.withZone(java.time.ZoneId.systemDefault()).format(java.time.Instant.ofEpochSecond(fetchedAt));
+		addFullWidth(message("Wiki data fetched: " + fetched));
+		if (fallback)
+		{
+			addFullWidth(message("Wiki lookup failed. Showing saved data; it may be out of date."));
+		}
+		if (refreshAction != null)
+		{
+			JButton refreshButton = panelButton("Refresh this " + type);
+			refreshButton.addActionListener(event ->
+			{
+				refreshButton.setEnabled(false);
+				refreshAction.run();
+			});
+			addFullWidth(refreshButton);
+		}
 	}
 
 	private void addPriceSummary(ItemPriceSummary priceSummary)

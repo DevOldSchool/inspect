@@ -198,6 +198,61 @@ public class NpcInspectServiceTest
 		assertFailure(() -> transportFailureService.search("goblin").get(5, TimeUnit.SECONDS), "offline");
 	}
 
+	@Test
+	public void expiredDiskDataSurvivesFailedLookupAndRefresh() throws Exception
+	{
+		Path directory = temporaryFolder.newFolder().toPath();
+		NpcCombatInfo saved = NpcCombatInfo.builder().npcId(3028).wikiPage("Saved_page")
+			.wikiAnchor("Exact_variant").displayName("Goblin guard").fetchedAtEpochSecond(1000L)
+			.sourceUrl("https://wiki.test/w/Saved_page#Exact_variant").build();
+		NpcInspectCache cache = new NpcInspectCache(new Gson(), directory);
+		cache.put(saved).get(5, TimeUnit.SECONDS);
+		cache.shutDown();
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueueFailure(new IOException("offline"));
+		responses.enqueue(503, "unavailable");
+		responses.enqueueFailure(new IOException("offline"));
+		NpcInspectService lookup = service(responses, directory);
+
+		NpcCombatInfo fallback = lookup.inspect(3028, "Goblin guard", 7).get(5, TimeUnit.SECONDS);
+		assertTrue(fallback.isCachedFallback());
+		assertEquals(1000L, fallback.getFetchedAtEpochSecond());
+		assertEquals("Exact_variant", fallback.getWikiAnchor());
+		NpcCombatInfo refreshed = lookup.refresh(fallback).get(5, TimeUnit.SECONDS);
+		assertTrue(refreshed.isCachedFallback());
+		assertEquals(1000L, refreshed.getFetchedAtEpochSecond());
+		assertEquals("Saved_page", responses.requests().get(1).url().queryParameter("page"));
+		assertTrue(lookup.search("Goblin guard", 7).get(5, TimeUnit.SECONDS).isCachedFallback());
+	}
+
+	@Test
+	public void refreshWithNoMatchingInfoboxDoesNotPresentOldDataAsSuccess() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, parseResponse("No matching infobox"));
+		NpcCombatInfo saved = NpcCombatInfo.builder().npcId(3028).wikiPage("Removed_page")
+			.displayName("Removed entry").fetchedAtEpochSecond(1000L).build();
+		assertNull(service(responses).refresh(saved).get(5, TimeUnit.SECONDS));
+	}
+
+	@Test
+	public void manualRefreshBypassesFreshCacheAndClearsFallbackFlag() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, parseResponse("{{Infobox Monster\n|name = Goblin guard\n|id = 3028\n|combat = 2\n}}"));
+		NpcInspectService lookup = service(responses);
+		NpcCombatInfo saved = NpcCombatInfo.builder().npcId(3028).wikiPage("Saved_page")
+			.displayName("Goblin guard").fetchedAtEpochSecond(1000L).cachedFallback(true).build();
+
+		NpcCombatInfo refreshed = lookup.refresh(saved).get(5, TimeUnit.SECONDS);
+		assertTrue(!refreshed.isCachedFallback());
+		assertTrue(refreshed.getFetchedAtEpochSecond() > 1000L);
+		assertEquals(1, responses.requestCount());
+		assertEquals("Saved_page", responses.requests().get(0).url().queryParameter("page"));
+		assertEquals(refreshed, lookup.inspect(3028, "Goblin guard", 7).get(5, TimeUnit.SECONDS));
+		assertEquals(1, responses.requestCount());
+	}
+
 	private NpcInspectService service(QueuedResponseInterceptor responses) throws IOException
 	{
 		return service(responses, temporaryFolder.newFolder().toPath());

@@ -1,6 +1,7 @@
 package com.inspect.npc;
 
 import com.google.gson.Gson;
+import com.inspect.inspect.WikiCacheLookup;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -60,6 +61,17 @@ public class NpcInspectService
 		cache.shutDown();
 	}
 
+	public CompletableFuture<NpcCombatInfo> refresh(NpcCombatInfo info)
+	{
+		NpcWikiLookup lookup = new NpcWikiLookup(info.getWikiPage(), info.getWikiAnchor(), info.getSourceUrl());
+		return fetchWikitext(lookup)
+			.thenApply(wikitext -> parser.parse(info.getNpcId(), info.getDisplayName(), lookup, wikitext))
+			.thenCompose(updated -> updated == null || updated.getNpcId() < 0
+				? CompletableFuture.completedFuture(updated)
+				: cache.put(updated).thenApply(ignored -> updated))
+			.exceptionally(error -> info.toBuilder().cachedFallback(true).build());
+	}
+
 	public CompletableFuture<Void> clearCacheAsync()
 	{
 		return cache.clearAsync();
@@ -89,8 +101,9 @@ public class NpcInspectService
 		}
 
 		long now = System.currentTimeMillis() / 1000L;
-		return cache.get(npcId, now, ttlDays)
-			.thenCompose(cached -> cached.map(CompletableFuture::completedFuture).orElseGet(() -> fetch(npcId, npcName)));
+		return cache.get(npcId, now, ttlDays, true)
+			.thenCompose(cached -> WikiCacheLookup.load(cached, info -> !info.isExpired(now, ttlDays),
+				() -> fetch(npcId, npcName), info -> info.toBuilder().cachedFallback(true).build()));
 	}
 
 	public CompletableFuture<NpcCombatInfo> search(String query)
@@ -107,8 +120,9 @@ public class NpcInspectService
 
 		String normalizedQuery = query.trim();
 		long now = System.currentTimeMillis() / 1000L;
-		return cache.getBySearchTerm(normalizedQuery, now, ttlDays)
-			.thenCompose(cached -> cached.map(CompletableFuture::completedFuture).orElseGet(() -> searchWiki(normalizedQuery)));
+		return cache.getBySearchTerm(normalizedQuery, now, ttlDays, true)
+			.thenCompose(cached -> WikiCacheLookup.load(cached, info -> !info.isExpired(now, ttlDays),
+				() -> searchWiki(normalizedQuery), info -> info.toBuilder().cachedFallback(true).build()));
 	}
 
 	private CompletableFuture<NpcCombatInfo> searchWiki(String query)

@@ -5,7 +5,7 @@ import lombok.Builder;
 import lombok.Value;
 
 @Value
-@Builder
+@Builder(toBuilder = true)
 public class ItemInspectInfo
 {
 	int itemId;
@@ -51,6 +51,7 @@ public class ItemInspectInfo
 	String sourceSummary;
 	List<ItemSource> sourcePlan;
 	long fetchedAtEpochSecond;
+	transient boolean cachedFallback;
 	String sourceUrl;
 
 	public boolean isExpired(long nowEpochSecond, int ttlDays)

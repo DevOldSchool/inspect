@@ -318,6 +318,75 @@ public class ItemInspectServiceTest
 		assertFailure(() -> finalItemService.search("whip").get(5, TimeUnit.SECONDS), "offline");
 	}
 
+	@Test
+	public void expiredDiskDataSurvivesFailedLookupAndRefresh() throws Exception
+	{
+		Path directory = temporaryFolder.newFolder().toPath();
+		ItemInspectInfo saved = ItemInspectInfo.builder().itemId(4151).wikiPage("Saved_page")
+			.wikiAnchor("Exact_variant").displayName("Abyssal whip").fetchedAtEpochSecond(1000L)
+			.sourceUrl("https://wiki.test/w/Saved_page#Exact_variant").build();
+		ItemInspectCache cache = new ItemInspectCache(new Gson(), directory);
+		cache.put(saved).get(5, TimeUnit.SECONDS);
+		cache.shutDown();
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueueFailure(new IOException("offline"));
+		responses.enqueue(503, "unavailable");
+		responses.enqueueFailure(new IOException("offline"));
+		ItemInspectService lookup = service(responses, directory);
+
+		ItemInspectInfo fallback = lookup.inspect(4151, "Abyssal whip", 7).get(5, TimeUnit.SECONDS);
+		assertTrue(fallback.isCachedFallback());
+		assertEquals(1000L, fallback.getFetchedAtEpochSecond());
+		assertEquals("Exact_variant", fallback.getWikiAnchor());
+		ItemInspectInfo refreshed = lookup.refresh(fallback).get(5, TimeUnit.SECONDS);
+		assertTrue(refreshed.isCachedFallback());
+		assertEquals(1000L, refreshed.getFetchedAtEpochSecond());
+		assertEquals("Saved_page", responses.requests().get(1).url().queryParameter("page"));
+		assertTrue(lookup.search("Abyssal whip", 7).get(5, TimeUnit.SECONDS).isCachedFallback());
+	}
+
+	@Test
+	public void expiredVariantSearchFallsBackDuringOutage() throws Exception
+	{
+		Path directory = temporaryFolder.newFolder().toPath();
+		ItemInspectCache cache = new ItemInspectCache(new Gson(), directory);
+		List<ItemInspectVariant> variants = Arrays.asList(
+			new ItemInspectVariant(4151, "Whip", "Abyssal_whip", null, "https://wiki.test/w/Abyssal_whip"));
+		cache.putVariants("whip", variants, 1000L).get(5, TimeUnit.SECONDS);
+		cache.shutDown();
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueueFailure(new IOException("offline"));
+		assertEquals(variants, service(responses, directory).searchVariants("whip", 7).get(5, TimeUnit.SECONDS));
+	}
+
+	@Test
+	public void refreshWithNoMatchingInfoboxDoesNotPresentOldDataAsSuccess() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, parseResponse("No matching infobox"));
+		ItemInspectInfo saved = ItemInspectInfo.builder().itemId(4151).wikiPage("Removed_page")
+			.displayName("Removed entry").fetchedAtEpochSecond(1000L).build();
+		assertNull(service(responses).refresh(saved).get(5, TimeUnit.SECONDS));
+	}
+
+	@Test
+	public void manualRefreshBypassesFreshCacheAndClearsFallbackFlag() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, parseResponse("{{Infobox Item\n|name = Abyssal whip\n|id = 4151\n|value = 100\n}}"));
+		ItemInspectService lookup = service(responses);
+		ItemInspectInfo saved = ItemInspectInfo.builder().itemId(4151).wikiPage("Saved_page")
+			.displayName("Abyssal whip").fetchedAtEpochSecond(1000L).cachedFallback(true).build();
+
+		ItemInspectInfo refreshed = lookup.refresh(saved).get(5, TimeUnit.SECONDS);
+		assertTrue(!refreshed.isCachedFallback());
+		assertTrue(refreshed.getFetchedAtEpochSecond() > 1000L);
+		assertEquals(1, responses.requestCount());
+		assertEquals("Saved_page", responses.requests().get(0).url().queryParameter("page"));
+		assertEquals(refreshed, lookup.inspect(4151, "Abyssal whip", 7).get(5, TimeUnit.SECONDS));
+		assertEquals(1, responses.requestCount());
+	}
+
 	private ItemInspectService service(QueuedResponseInterceptor responses) throws IOException
 	{
 		return service(responses, temporaryFolder.newFolder().toPath());

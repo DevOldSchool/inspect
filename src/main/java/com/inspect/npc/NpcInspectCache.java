@@ -59,12 +59,17 @@ class NpcInspectCache
 
 	CompletableFuture<Optional<NpcCombatInfo>> get(int npcId, long nowEpochSecond, int ttlDays)
 	{
+		return get(npcId, nowEpochSecond, ttlDays, false);
+	}
+
+	CompletableFuture<Optional<NpcCombatInfo>> get(int npcId, long nowEpochSecond, int ttlDays, boolean includeExpired)
+	{
 		synchronized (this)
 		{
 			NpcCombatInfo cached = memoryCache.get(npcId);
 			if (cached != null)
 			{
-				if (!cached.isExpired(nowEpochSecond, ttlDays))
+				if (includeExpired || !cached.isExpired(nowEpochSecond, ttlDays))
 				{
 					return CompletableFuture.completedFuture(Optional.of(cached));
 				}
@@ -72,10 +77,15 @@ class NpcInspectCache
 			}
 		}
 
-		return CompletableFuture.supplyAsync(() -> readFromDisk(npcId, nowEpochSecond, ttlDays), executor);
+		return CompletableFuture.supplyAsync(() -> readFromDisk(npcId, nowEpochSecond, ttlDays, includeExpired), executor);
 	}
 
 	CompletableFuture<Optional<NpcCombatInfo>> getBySearchTerm(String searchTerm, long nowEpochSecond, int ttlDays)
+	{
+		return getBySearchTerm(searchTerm, nowEpochSecond, ttlDays, false);
+	}
+
+	CompletableFuture<Optional<NpcCombatInfo>> getBySearchTerm(String searchTerm, long nowEpochSecond, int ttlDays, boolean includeExpired)
 	{
 		String normalizedSearchTerm = normalizeSearchTerm(searchTerm);
 		if (normalizedSearchTerm.isEmpty())
@@ -87,14 +97,14 @@ class NpcInspectCache
 		{
 			for (NpcCombatInfo cached : memoryCache.values())
 			{
-				if (!cached.isExpired(nowEpochSecond, ttlDays) && matchesSearchTerm(cached, normalizedSearchTerm))
+				if ((includeExpired || !cached.isExpired(nowEpochSecond, ttlDays)) && matchesSearchTerm(cached, normalizedSearchTerm))
 				{
 					return CompletableFuture.completedFuture(Optional.of(cached));
 				}
 			}
 		}
 
-		return CompletableFuture.supplyAsync(() -> readBySearchTerm(normalizedSearchTerm, nowEpochSecond, ttlDays), executor);
+		return CompletableFuture.supplyAsync(() -> readBySearchTerm(normalizedSearchTerm, nowEpochSecond, ttlDays, includeExpired), executor);
 	}
 
 	CompletableFuture<Void> put(NpcCombatInfo info)
@@ -144,7 +154,7 @@ class NpcInspectCache
 		}, executor);
 	}
 
-	private Optional<NpcCombatInfo> readFromDisk(int npcId, long nowEpochSecond, int ttlDays)
+	private Optional<NpcCombatInfo> readFromDisk(int npcId, long nowEpochSecond, int ttlDays, boolean includeExpired)
 	{
 		try
 		{
@@ -173,11 +183,15 @@ class NpcInspectCache
 				if (info == null
 					|| info.getNpcId() != npcId
 					|| !info.hasCurrentCacheSchema()
-					|| !cacheKey.equals(info.cacheKey())
-					|| info.isExpired(nowEpochSecond, ttlDays))
+					|| !cacheKey.equals(info.cacheKey()))
 				{
 					Files.deleteIfExists(cacheFile);
 					removeIndex(npcId);
+					return Optional.empty();
+				}
+
+				if (!includeExpired && info.isExpired(nowEpochSecond, ttlDays))
+				{
 					return Optional.empty();
 				}
 
@@ -203,7 +217,7 @@ class NpcInspectCache
 		}
 	}
 
-	private Optional<NpcCombatInfo> readBySearchTerm(String normalizedSearchTerm, long nowEpochSecond, int ttlDays)
+	private Optional<NpcCombatInfo> readBySearchTerm(String normalizedSearchTerm, long nowEpochSecond, int ttlDays, boolean includeExpired)
 	{
 		try
 		{
@@ -218,7 +232,7 @@ class NpcInspectCache
 
 			for (Map.Entry<Integer, String> entry : cacheKeys.entrySet())
 			{
-				Optional<NpcCombatInfo> cached = readCachedInfo(entry.getKey(), entry.getValue(), nowEpochSecond, ttlDays);
+				Optional<NpcCombatInfo> cached = readCachedInfo(entry.getKey(), entry.getValue(), nowEpochSecond, ttlDays, includeExpired);
 				if (cached.isPresent() && matchesSearchTerm(cached.get(), normalizedSearchTerm))
 				{
 					return cached;
@@ -232,7 +246,7 @@ class NpcInspectCache
 		return Optional.empty();
 	}
 
-	private Optional<NpcCombatInfo> readCachedInfo(int npcId, String cacheKey, long nowEpochSecond, int ttlDays)
+	private Optional<NpcCombatInfo> readCachedInfo(int npcId, String cacheKey, long nowEpochSecond, int ttlDays, boolean includeExpired)
 		throws IOException
 	{
 		Path cacheFile = cachePath(cacheKey);
@@ -247,11 +261,15 @@ class NpcInspectCache
 			if (info == null
 				|| info.getNpcId() != npcId
 				|| !info.hasCurrentCacheSchema()
-				|| !cacheKey.equals(info.cacheKey())
-				|| info.isExpired(nowEpochSecond, ttlDays))
+				|| !cacheKey.equals(info.cacheKey()))
 			{
 				Files.deleteIfExists(cacheFile);
 				removeIndex(npcId);
+				return Optional.empty();
+			}
+
+			if (!includeExpired && info.isExpired(nowEpochSecond, ttlDays))
+			{
 				return Optional.empty();
 			}
 

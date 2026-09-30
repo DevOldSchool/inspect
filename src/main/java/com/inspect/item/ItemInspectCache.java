@@ -67,12 +67,17 @@ class ItemInspectCache
 
 	CompletableFuture<Optional<ItemInspectInfo>> get(int itemId, long nowEpochSecond, int ttlDays)
 	{
+		return get(itemId, nowEpochSecond, ttlDays, false);
+	}
+
+	CompletableFuture<Optional<ItemInspectInfo>> get(int itemId, long nowEpochSecond, int ttlDays, boolean includeExpired)
+	{
 		synchronized (this)
 		{
 			ItemInspectInfo cached = memoryCache.get(itemId);
 			if (cached != null)
 			{
-				if (!cached.isExpired(nowEpochSecond, ttlDays))
+				if (includeExpired || !cached.isExpired(nowEpochSecond, ttlDays))
 				{
 					return CompletableFuture.completedFuture(Optional.of(cached));
 				}
@@ -80,10 +85,15 @@ class ItemInspectCache
 			}
 		}
 
-		return CompletableFuture.supplyAsync(() -> readFromDisk(itemId, nowEpochSecond, ttlDays), executor);
+		return CompletableFuture.supplyAsync(() -> readFromDisk(itemId, nowEpochSecond, ttlDays, includeExpired), executor);
 	}
 
 	CompletableFuture<Optional<ItemInspectInfo>> getBySearchTerm(String searchTerm, long nowEpochSecond, int ttlDays)
+	{
+		return getBySearchTerm(searchTerm, nowEpochSecond, ttlDays, false);
+	}
+
+	CompletableFuture<Optional<ItemInspectInfo>> getBySearchTerm(String searchTerm, long nowEpochSecond, int ttlDays, boolean includeExpired)
 	{
 		String normalizedSearchTerm = normalizeSearchTerm(searchTerm);
 		if (normalizedSearchTerm.isEmpty())
@@ -95,14 +105,14 @@ class ItemInspectCache
 		{
 			for (ItemInspectInfo cached : memoryCache.values())
 			{
-				if (!cached.isExpired(nowEpochSecond, ttlDays) && matchesSearchTerm(cached, normalizedSearchTerm))
+				if ((includeExpired || !cached.isExpired(nowEpochSecond, ttlDays)) && matchesSearchTerm(cached, normalizedSearchTerm))
 				{
 					return CompletableFuture.completedFuture(Optional.of(cached));
 				}
 			}
 		}
 
-		return CompletableFuture.supplyAsync(() -> readBySearchTerm(normalizedSearchTerm, nowEpochSecond, ttlDays), executor);
+		return CompletableFuture.supplyAsync(() -> readBySearchTerm(normalizedSearchTerm, nowEpochSecond, ttlDays, includeExpired), executor);
 	}
 
 	CompletableFuture<Void> put(ItemInspectInfo info)
@@ -121,6 +131,12 @@ class ItemInspectCache
 		long nowEpochSecond,
 		int ttlDays)
 	{
+		return getVariants(searchTerm, nowEpochSecond, ttlDays, false);
+	}
+
+	CompletableFuture<Optional<List<ItemInspectVariant>>> getVariants(
+		String searchTerm, long nowEpochSecond, int ttlDays, boolean includeExpired)
+	{
 		String normalizedSearchTerm = normalizeSearchTerm(searchTerm);
 		if (normalizedSearchTerm.isEmpty())
 		{
@@ -130,14 +146,14 @@ class ItemInspectCache
 		synchronized (this)
 		{
 			ItemInspectVariantCacheEntry cached = variantsBySearchTerm.get(normalizedSearchTerm);
-			if (cached != null && !cached.isExpired(nowEpochSecond, ttlDays))
+			if (cached != null && (includeExpired || !cached.isExpired(nowEpochSecond, ttlDays)))
 			{
 				return CompletableFuture.completedFuture(Optional.of(copyVariants(cached.getVariants())));
 			}
 		}
 
 		return CompletableFuture.supplyAsync(
-			() -> readVariants(normalizedSearchTerm, nowEpochSecond, ttlDays),
+			() -> readVariants(normalizedSearchTerm, nowEpochSecond, ttlDays, includeExpired),
 			executor);
 	}
 
@@ -199,7 +215,7 @@ class ItemInspectCache
 	private Optional<List<ItemInspectVariant>> readVariants(
 		String normalizedSearchTerm,
 		long nowEpochSecond,
-		int ttlDays)
+		int ttlDays, boolean includeExpired)
 	{
 		try
 		{
@@ -214,14 +230,11 @@ class ItemInspectCache
 				{
 					return Optional.empty();
 				}
-				if (!cached.isExpired(nowEpochSecond, ttlDays))
+				if (includeExpired || !cached.isExpired(nowEpochSecond, ttlDays))
 				{
 					return Optional.of(copyVariants(cached.getVariants()));
 				}
-				variantsBySearchTerm.remove(normalizedSearchTerm);
 			}
-
-			writeVariants();
 		}
 		catch (IOException ex)
 		{
@@ -230,7 +243,7 @@ class ItemInspectCache
 		return Optional.empty();
 	}
 
-	private Optional<ItemInspectInfo> readFromDisk(int itemId, long nowEpochSecond, int ttlDays)
+	private Optional<ItemInspectInfo> readFromDisk(int itemId, long nowEpochSecond, int ttlDays, boolean includeExpired)
 	{
 		try
 		{
@@ -247,7 +260,7 @@ class ItemInspectCache
 				return Optional.empty();
 			}
 
-			return readCachedInfo(itemId, cacheKey, nowEpochSecond, ttlDays);
+			return readCachedInfo(itemId, cacheKey, nowEpochSecond, ttlDays, includeExpired);
 		}
 		catch (IOException ex)
 		{
@@ -256,7 +269,7 @@ class ItemInspectCache
 		}
 	}
 
-	private Optional<ItemInspectInfo> readBySearchTerm(String normalizedSearchTerm, long nowEpochSecond, int ttlDays)
+	private Optional<ItemInspectInfo> readBySearchTerm(String normalizedSearchTerm, long nowEpochSecond, int ttlDays, boolean includeExpired)
 	{
 		try
 		{
@@ -271,7 +284,7 @@ class ItemInspectCache
 
 			for (Map.Entry<Integer, String> entry : cacheKeys.entrySet())
 			{
-				Optional<ItemInspectInfo> cached = readCachedInfo(entry.getKey(), entry.getValue(), nowEpochSecond, ttlDays);
+				Optional<ItemInspectInfo> cached = readCachedInfo(entry.getKey(), entry.getValue(), nowEpochSecond, ttlDays, includeExpired);
 				if (cached.isPresent() && matchesSearchTerm(cached.get(), normalizedSearchTerm))
 				{
 					return cached;
@@ -285,7 +298,7 @@ class ItemInspectCache
 		return Optional.empty();
 	}
 
-	private Optional<ItemInspectInfo> readCachedInfo(int itemId, String cacheKey, long nowEpochSecond, int ttlDays)
+	private Optional<ItemInspectInfo> readCachedInfo(int itemId, String cacheKey, long nowEpochSecond, int ttlDays, boolean includeExpired)
 		throws IOException
 	{
 		Path cacheFile = cachePath(cacheKey);
@@ -297,10 +310,15 @@ class ItemInspectCache
 		try (Reader reader = Files.newBufferedReader(cacheFile, StandardCharsets.UTF_8))
 		{
 			ItemInspectInfo info = gson.fromJson(reader, ItemInspectInfo.class);
-			if (info == null || info.getItemId() != itemId || info.isExpired(nowEpochSecond, ttlDays))
+			if (info == null || info.getItemId() != itemId)
 			{
 				Files.deleteIfExists(cacheFile);
 				removeIndex(itemId);
+				return Optional.empty();
+			}
+
+			if (!includeExpired && info.isExpired(nowEpochSecond, ttlDays))
+			{
 				return Optional.empty();
 			}
 

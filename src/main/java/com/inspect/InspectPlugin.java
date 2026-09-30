@@ -152,6 +152,8 @@ public class InspectPlugin extends Plugin
 		inspectPanel.setSearchHandler(this::searchInspect);
 		inspectPanel.setItemVariantInspectHandler(this::inspectItemVariant);
 		inspectPanel.setItemInspectHandler(this::inspectPlayerEquipmentItem);
+		inspectPanel.setItemRefreshHandler(this::refreshItem);
+		inspectPanel.setNpcRefreshHandler(this::refreshNpc);
 		inspectPanel.setPinnedInspectHandler(new InspectPanel.PinnedInspectHandler()
 		{
 			@Override
@@ -715,6 +717,48 @@ public class InspectPlugin extends Plugin
 			}));
 	}
 
+	private void refreshItem(ItemInspectInfo info)
+	{
+		if (!config.enableWikiLookups())
+		{
+			inspectPanel.showSearchDisabled("Enable OSRS Wiki lookups in the Inspect config to refresh wiki data.");
+			return;
+		}
+		inspectPanel.showItemLoading(info.getDisplayName());
+		clientThread.invokeLater(() -> renderItemLookup(itemInspectService.refresh(info),
+			info.getDisplayName(), snapshotEquippedItems(), false));
+	}
+
+	private void refreshNpc(NpcCombatInfo previous)
+	{
+		if (!config.enableWikiLookups())
+		{
+			inspectPanel.showSearchDisabled("Enable OSRS Wiki lookups in the Inspect config to refresh wiki data.");
+			return;
+		}
+		InspectPanel panel = inspectPanel;
+		panel.showLoading(previous.getDisplayName());
+		npcInspectService.refresh(previous).whenComplete((info, error) -> SwingUtilities.invokeLater(() ->
+		{
+			if (inspectPanel != panel)
+			{
+				return;
+			}
+			if (error != null)
+			{
+				panel.showError(previous.getDisplayName(), "Unable to refresh wiki data.");
+			}
+			else if (info == null)
+			{
+				panel.showNotFound(previous.getDisplayName());
+			}
+			else
+			{
+				showNpcInfoWithLocalChecks(info, true);
+			}
+		}));
+	}
+
 	private void inspectItem(int itemId, String itemName)
 	{
 		Map<EquipmentInventorySlot, EquippedItem> equippedItems = snapshotEquippedItems();
@@ -992,6 +1036,7 @@ public class InspectPlugin extends Plugin
 
 	private void renderItemLookup(CompletableFuture<ItemInspectInfo> lookup, String itemName, Map<EquipmentInventorySlot, EquippedItem> equippedItems, boolean search)
 	{
+		InspectPanel panel = inspectPanel;
 		Map<Skill, Integer> skillLevels = snapshotSkillLevels();
 		lookup
 			.thenCompose(info ->
@@ -1021,6 +1066,10 @@ public class InspectPlugin extends Plugin
 				{
 					SwingUtilities.invokeLater(() ->
 					{
+						if (inspectPanel != panel)
+						{
+							return;
+						}
 						log.debug("Item Inspect lookup failed for {}", itemName, throwable);
 						if (search)
 						{
@@ -1038,6 +1087,10 @@ public class InspectPlugin extends Plugin
 				{
 					SwingUtilities.invokeLater(() ->
 					{
+						if (inspectPanel != panel)
+						{
+							return;
+						}
 						if (search)
 						{
 							inspectPanel.showSearchNotFound("Item", itemName);
@@ -1052,6 +1105,10 @@ public class InspectPlugin extends Plugin
 
 				clientThread.invokeLater(() ->
 				{
+					if (inspectPanel != panel)
+					{
+						return;
+					}
 					ItemPriceSummary priceSummary = itemPriceSummary(result.info);
 					ItemRequirementSummary requirementSummary = itemRequirementSummary(result.info, skillLevels);
 					Map<Quest, QuestState> questStates = snapshotItemSourceQuestStates(result.info);
@@ -1063,6 +1120,10 @@ public class InspectPlugin extends Plugin
 						accountMode);
 					SwingUtilities.invokeLater(() ->
 					{
+						if (inspectPanel != panel)
+						{
+							return;
+						}
 						addRecentItem(recentItemInspects, result.info.getItemId(),
 							result.info.getDisplayName() == null ? itemName : result.info.getDisplayName());
 						bankEquipmentOverlay.clear();
