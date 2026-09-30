@@ -1,6 +1,7 @@
 package com.inspect;
 
 import com.inspect.item.ItemInspectInfo;
+import com.inspect.item.AlchemyEquipment;
 import com.inspect.item.ItemInspectVariant;
 import com.inspect.item.ItemInspectVariantSelector;
 import com.inspect.item.ItemPriceSummary;
@@ -10,6 +11,7 @@ import com.inspect.item.ItemSourceAccountMode;
 import com.inspect.item.ItemSourceReadiness;
 import com.inspect.item.ItemSourceReadinessEvaluator;
 import com.inspect.inspect.InspectPanel;
+import com.inspect.inspect.PanelPreferences;
 import com.inspect.inspect.PinnedInspectState;
 import com.inspect.inspect.RecentInspectEntry;
 import com.inspect.inspect.SearchQueryNormalizer;
@@ -89,8 +91,8 @@ import net.runelite.http.api.item.ItemPrice;
 @Slf4j
 @PluginDescriptor(
 	name = "Inspect",
-	description = "Enhances OSRS gameplay with optional inspect information tools.",
-	tags = {"npc", "item", "equipment", "inspect", "wiki"}
+	description = "Inspect player gear, NPC weaknesses and item stats. Compare equipment and find useful gear in your bank.",
+	tags = {"item", "npc", "player", "equipment", "gear", "bank", "slayer", "drops", "compare", "ironman", "wiki"}
 )
 public class InspectPlugin extends Plugin
 {
@@ -112,6 +114,9 @@ public class InspectPlugin extends Plugin
 	private InspectConfig config;
 
 	@Inject
+	private PanelPreferences panelPreferences;
+
+	@Inject
 	private NpcInspectService npcInspectService;
 
 	@Inject
@@ -119,6 +124,8 @@ public class InspectPlugin extends Plugin
 
 	@Inject
 	private ItemInspectService itemInspectService;
+
+	private ItemInspectInfo currentPriceItem;
 
 	@Inject
 	private BankEquipmentRecommendationService bankEquipmentRecommendationService;
@@ -158,6 +165,7 @@ public class InspectPlugin extends Plugin
 		inspectPanel.setItemInspectHandler(this::inspectPlayerEquipmentItem);
 		inspectPanel.setItemRefreshHandler(this::refreshItem);
 		inspectPanel.setNpcRefreshHandler(this::refreshNpc);
+		inspectPanel.setPanelPreferences(panelPreferences);
 		inspectPanel.setNpcChoiceHandler(this::inspectNpcChoice);
 		inspectPanel.setNpcThumbnailLoader(npcThumbnailService::getThumbnail);
 		inspectPanel.setPinnedInspectHandler(new InspectPanel.PinnedInspectHandler()
@@ -304,6 +312,7 @@ public class InspectPlugin extends Plugin
 		inspectPanel = null;
 		inspectNavButton = null;
 		currentNpcInfo = null;
+		currentPriceItem = null;
 		currentNpcRecommendation = null;
 		currentNpcRecommendationMessage = null;
 		currentNpcDropItemIds = Collections.emptyMap();
@@ -355,6 +364,7 @@ public class InspectPlugin extends Plugin
 		{
 			Map<Skill, Integer> skillLevels = snapshotSkillLevels();
 			ItemRequirementSummary requirementSummary = itemRequirementSummary(info, skillLevels);
+			currentPriceItem = info;
 			ItemPriceSummary priceSummary = itemPriceSummary(info);
 			Map<Quest, QuestState> questStates = snapshotItemSourceQuestStates(info);
 			ItemSourceAccountMode accountMode = itemSourceAccountMode();
@@ -448,6 +458,19 @@ public class InspectPlugin extends Plugin
 		}
 
 		refreshCurrentNpcItemRequirements();
+		if (event.getContainerId() == InventoryID.WORN && currentPriceItem != null)
+		{
+			ItemInspectInfo info = currentPriceItem;
+			ItemPriceSummary prices = itemPriceSummary(info);
+			InspectPanel panel = inspectPanel;
+			SwingUtilities.invokeLater(() ->
+			{
+				if (panel != null && panel == inspectPanel)
+				{
+					panel.updateItemPrices(info, prices);
+				}
+			});
+		}
 	}
 
 	@Subscribe
@@ -1181,6 +1204,7 @@ public class InspectPlugin extends Plugin
 					{
 						return;
 					}
+					currentPriceItem = result.info;
 					ItemPriceSummary priceSummary = itemPriceSummary(result.info);
 					ItemRequirementSummary requirementSummary = itemRequirementSummary(result.info, skillLevels);
 					Map<Quest, QuestState> questStates = snapshotItemSourceQuestStates(result.info);
@@ -1259,7 +1283,7 @@ public class InspectPlugin extends Plugin
 					bankEquipmentOverlay.setHighlightedItemRanks(recommendation.bankItemRanks());
 					showNpcInfo(info, recommendation, recommendation.bankItemRanks().isEmpty()
 						? "Checked current equipment. Open your bank to highlight gear."
-						: "Ranked matching bank gear.", itemRequirementStatuses, dropItemIds);
+						: "Ranked bank gear within each equipment slot.", itemRequirementStatuses, dropItemIds);
 				}));
 		});
 	}
@@ -2118,10 +2142,16 @@ public class InspectPlugin extends Plugin
 			return null;
 		}
 
-		return itemPriceSummary(info, itemManager.getItemPrice(info.getItemId()));
+		ItemContainer equipment = client.getItemContainer(InventoryID.WORN);
+		Item weapon = equipment == null ? null : equipment.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx());
+		Item shield = equipment == null ? null : equipment.getItem(EquipmentInventorySlot.SHIELD.getSlotIdx());
+		boolean unlimitedFire = AlchemyEquipment.suppliesFireRunes(
+			weapon == null ? -1 : weapon.getId(), shield == null ? -1 : shield.getId());
+		return itemPriceSummary(info, itemManager.getItemPrice(info.getItemId()),
+			itemManager.getItemPrice(ItemID.NATURERUNE), itemManager.getItemPrice(ItemID.FIRERUNE), unlimitedFire);
 	}
 
-	static ItemPriceSummary itemPriceSummary(ItemInspectInfo info, long itemPrice)
+	static ItemPriceSummary itemPriceSummary(ItemInspectInfo info, long itemPrice, long naturePrice, long firePrice, boolean unlimitedFire)
 	{
 		long gePrice = Math.max(0, itemPrice);
 		Integer highAlch = coinValue(info.getHighAlch());
@@ -2135,12 +2165,31 @@ public class InspectPlugin extends Plugin
 		{
 			lowAlch = (int) Math.floor(itemValue * 0.4d);
 		}
+		Long castingCost = null;
+		if (naturePrice > 0 && (unlimitedFire || firePrice > 0))
+		{
+			try
+			{
+				castingCost = Math.addExact(naturePrice, unlimitedFire ? 0L : Math.multiplyExact(5L, firePrice));
+			}
+			catch (ArithmeticException ignored)
+			{
+				// An unusable price must not produce a misleading profit estimate.
+			}
+		}
 		Long profitValue = null;
 		String profit = null;
-		if (gePrice > 0 && highAlch != null)
+		if (gePrice > 0 && highAlch != null && castingCost != null)
 		{
-			profitValue = highAlch - gePrice;
-			profit = formatSignedCoins(profitValue);
+			try
+			{
+				profitValue = Math.subtractExact(highAlch - gePrice, castingCost);
+				profit = formatSignedCoins(profitValue);
+			}
+			catch (ArithmeticException ignored)
+			{
+				// Keep the estimate unavailable if the result cannot be represented.
+			}
 		}
 
 		return new ItemPriceSummary(
@@ -2148,7 +2197,12 @@ public class InspectPlugin extends Plugin
 			highAlch == null ? info.getHighAlch() : formatCoins(highAlch),
 			lowAlch == null ? info.getLowAlch() : formatCoins(lowAlch),
 			profit,
-			profitValue
+			profitValue,
+			castingCost == null ? "Unavailable" : formatCoins(castingCost),
+			(unlimitedFire ? "1 nature rune; unlimited fire runes equipped."
+				: "1 nature rune + 5 fire runes.")
+				+ " GE prices, standard cast."
+				+ (castingCost == null ? " Rune prices are unavailable." : "")
 		);
 	}
 

@@ -1,107 +1,70 @@
 # Inspect
 
-Inspect is a RuneLite plugin for optional Old School RuneScape inspect tools. It adds a single sidebar panel for looking up items, NPCs, players, and recent inspections.
+**Inspect player gear, compare equipment and look up NPCs and items in one RuneLite sidebar.**
 
-Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the plugin config, then the individual wiki-backed features are available by default and can be disabled separately.
+Right-click a player to see their visible equipment and compare it with your own. Check an NPC's weaknesses and required items, find suitable gear in your bank, and look up item bonuses, requirements and acquisition sources.
 
-## Features
+## Get started
 
-- **Item inspect**: inspect item widgets or search items from the sidebar.
-- **NPC inspect**: inspect NPCs or search NPCs from the sidebar.
-- **Exact item variant picker**: choose a specific item version by wiki anchor and game ID when a search page contains multiple variants.
-- **Player inspect**: inspect visible player equipment from client-side player composition data.
-- **Recent inspections**: return to recent item, NPC, and player inspections from the sidebar.
-- **Equipment recommendations**: rank owned bank/equipped gear for inspected NPC weaknesses.
-- **Bank highlights**: highlight recommended bank items with rank indicators.
-- **Item prices**: show GE price, high alch, low alch, and high-alch profit or loss.
-- **Account-aware item sources**: show acquisition methods with local quest/skill readiness and prioritise currently usable methods for Ironman accounts.
-- **Requirement checks**: show item equip requirements and per-source quest/skill readiness from local account state.
-- **NPC required items**: show item requirements for monsters that need a finishing item, with inventory/equipment readiness checks.
-- **Drop filters**: filter NPC drops into useful categories like valuable, rare, Slayer-only, clue, Ironman, alchable, and upgrade materials.
-- **Compare tray**: save an NPC, item, or player inspection as the current comparison and reopen it from the sidebar.
-- **Slayer and drop summaries**: show NPC Slayer details, clickable Slayer master links, and drop-table information when available from the wiki.
+1. Open RuneLite's **Plugin Hub**, search for **Inspect** by **DevOldSchool**, and install it.
+2. In Inspect's settings, turn on **Enable OSRS Wiki lookups** for item and NPC information. This is optional and off by default because it contacts the OSRS Wiki.
+3. Right-click an item, NPC or player and choose **Inspect**, or open the magnifying-glass sidebar to search for an item or NPC.
 
-## Item Inspect
+Try searching for `dragon dagger` to choose an exact variant, or inspect a Slayer monster with your bank open and press **Find gear in bank**.
 
-Item inspect shows wiki-backed item details, prices, requirements, sources, gear-role tags, bonuses, and comparison details where available.
+## What you can check
 
-Searches for multi-version items show each exact variant with its item icon, version anchor, and game ID. Searches that already name a unique variant, such as `Dragon dagger(p++)`, open that variant directly.
+| Feature | What it shows |
+| --- | --- |
+| **Player inspect** | Visible equipment, estimated gear value and bonus comparisons against your own gear. Pin a player to compare with another. Disabled in PvP areas. |
+| **NPCs and Slayer** | Combat stats, weaknesses, drops, Slayer details and required items checked against your inventory and equipment. |
+| **Gear in your bank** | Up to three candidates per equipment slot, with score explanations and ranked bank highlights. |
+| **Item details** | Equipment bonuses, requirements, acquisition sources and GE prices. |
+| **Account-aware sources** | Quest and skill readiness, with suitable acquisition methods prioritised for Ironman accounts. |
 
-The Sources section expands item acquisition into readable categories such as shops, monsters, skilling, quests, and clue-related sources. Each source marks known quest and skill requirements as met or missing. Ironman, Ultimate Ironman, Hardcore Ironman, and Group Ironman accounts see compatible methods with met requirements first; trade-only methods remain visible but are marked unavailable.
+Pin one item, NPC and player for comparisons. Choose exact item and NPC variants from search results, reopen recent inspections, and filter drops by categories such as rare, Slayer-only or alchable. Click section headings to collapse them; Inspect remembers your layout and preferred drop filter. **Reset panel layout** below the tabs expands all sections without changing your filter.
 
-The Requirements section reports item equip/use readiness separately. Local skill levels refresh after login or level changes, while source quest progress refreshes when the account state is loaded.
+## Screenshots
 
-![Item inspect example](images/item.png)
+Full panels from **Inspect 0.2.6**, with scrolling captures stitched together and overlapping content removed. Click an image to view it at its original resolution.
 
-## NPC Inspect
+| Inspect player gear | Choose an exact item variant |
+| --- | --- |
+| <a href="images/player-inspect-0.2.6.png"><img src="images/player-inspect-0.2.6.png" alt="Full player inspect panel showing visible equipment, estimated gear value, comparisons and recent players" width="300"></a> | <a href="images/item-variants-0.2.6.png"><img src="images/item-variants-0.2.6.png" alt="Item search and all four dragon dagger variants with their icons" width="300"></a> |
 
-NPC inspect shows combat stats, weakness summaries, Slayer details, required items, drop filters, a lightweight kill checklist, and equipment recommendations.
+| Explore NPC and Slayer details | Inspect and compare items |
+| --- | --- |
+| <a href="images/npc-inspect-0.2.6.png"><img src="images/npc-inspect-0.2.6.png" alt="Full gargoyle inspect panel showing combat stats, weaknesses, Slayer details, drops, required items and equipment recommendation controls" width="300"></a> | <a href="images/item-inspect-0.2.6.png"><img src="images/item-inspect-0.2.6.png" alt="Full dragon scimitar inspect panel showing item details, prices, bonuses, rune scimitar comparison and acquisition sources" width="300"></a> |
 
-NPC searches offer matching variants from up to five wiki pages, with combat level, version/location label where the wiki supplies one, page title, and game ID. A single complete result opens directly; multiple results let you choose the exact NPC. Searches show at most 50 variants, so use a more specific query if needed. Non-monster pages and historical-only IDs are excluded. Partial wiki failures are labelled and can be retried by searching again. Complete searches are cached across restarts, with labelled saved results available during outages.
+## How the estimates work
 
-Required items are grouped by condition. For example, gargoyles show the valid finishing items as alternatives, with each row marked as missing, in inventory, or equipped. The check refreshes when inventory or equipment changes.
+**Gear recommendations:** rankings use relevant accuracy + 1.5 × strength or magic damage percentage + 0.1 × Prayer. Hover a score for its calculation; unknown stats count as zero. This is a bonus comparison, not a DPS calculation: attack speed, special effects and equipment requirements are excluded. Two-handed weapons are marked `(2h)`; weapon and shield suggestions are alternatives rather than a complete compatible loadout. Click a candidate to inspect its requirements.
 
-Drop filters show one item per row, with item icons where RuneLite can resolve them. Rows with resolved item IDs can be right-clicked and inspected directly. The current filters are valuable, rare, Slayer-only, clue, Ironman, alchable, and upgrade.
+<details>
+<summary>Alchemy estimate details</summary>
 
-Slayer master tags open their OSRS Wiki pages.
+High-alch profit subtracts the item GE price and one nature rune plus five fire runes. Equipping a fire-rune-supplying staff or a charged Tome of fire removes the fire-rune cost, and the estimate updates when equipment changes. Missing rune prices leave it unavailable. Random rune savings and free Explorer's ring casts are excluded.
 
-![NPC inspect example](images/npc.png)
+</details>
 
-## Player Inspect
+## Settings and data
 
-Player inspect shows equipment visible through RuneLite's player composition data. It can compare visible gear against your current equipment and show simple visible gear tags.
+Wiki-backed features can be toggled separately after enabling lookups. Player equipment inspection has its own toggle. **Inspect cache days** controls how long saved wiki data stays fresh.
 
-Player equipment inspect does not upload, store, or crowdsource player gear.
+- Item and NPC panels show their wiki data timestamp. **Refresh this item/NPC** reloads that entry; GE prices and local account checks are separate.
+- If a lookup fails, valid saved data can be shown with a warning and its original timestamp. Cache controls let you clear saved entries.
+- Wiki data is cached under your `.runelite` directory. Player equipment is read from locally visible client data; Inspect does not upload, store or crowdsource player gear.
 
-![Player inspect example](images/player.png)
-
-Player inspect is disabled in PVP areas.
-
-![Player inspect in PVP example](images/player-pvp.png)
-
-## Compare
-
-The Compare tray keeps one pinned NPC, item, and player inspection. Pinning an inspection makes future inspections show a compact comparison against the saved entry. Pinned rows are clickable, so saved comparisons can be reopened without searching again.
-
-## Recent Inspections
-
-The Recent tab keeps short clickable lists for returning to item, NPC, and player inspections.
-
-![Recent inspections example](images/recent.png)
-
-## Configuration
-
-- **Enable OSRS Wiki lookups**: required for wiki-backed item, NPC, search, and recommendation features. Disabled by default because it contacts a third-party server.
-- **Player equipment inspect**: adds an Inspect menu option to players.
-- **NPC Inspect**: adds an Inspect menu option to NPCs. Requires OSRS Wiki lookups.
-- **Item Inspect**: adds an Inspect menu option to item widgets. Requires OSRS Wiki lookups.
-- **Inspect search**: enables sidebar search for item and NPC information. Requires OSRS Wiki lookups.
-- **Equipment recommendations**: enables NPC gear recommendations and bank highlighting. Requires OSRS Wiki lookups.
-- **Inspect cache days**: controls how long wiki data is cached.
-- **Clear NPC Inspect cache**: clears cached inspect wiki data when the plugin starts.
-
-## Data And Privacy
-
-Enhanced uses OSRS Wiki lookups only when the wiki lookup config is enabled. Wiki responses are cached under the RuneLite directory for the configured cache duration.
-
-NPC and item search results, including item variant choices, are served from the local Inspect cache when a matching cached entry is still fresh.
-
-Item and NPC panels show when their wiki data was fetched. **Refresh this item/NPC** fetches the selected page and variant again without clearing other cached entries. Refresh requires OSRS Wiki lookups to remain enabled. If a lookup fails and valid saved data exists, Inspect shows that data with a warning and its original timestamp. Expired item/NPC entries remain available for this fallback until replaced or explicitly cleared; a successful lookup with no matching result still reports not found. The timestamp applies to wiki details, not GE prices or local account checks.
-
-Player inspect uses locally visible client data only. It does not expose player information over HTTP.
+Found missing or incorrect information? [Report an issue](https://github.com/DevOldSchool/inspect/issues) with the item or NPC name, exact variant and what you expected to see.
 
 ## Development
 
-GitHub Actions builds and tests against the latest RuneLite release on pushes, pull requests, and daily at 20:23 UTC (06:23 Brisbane time). The CI workflow can also be run manually from the Actions tab. Scheduled runs use the default branch after the workflow is merged; check GitHub Actions notification settings to receive failure notifications. Failed runs retain test reports when available.
-
-Build and test:
+Requires Java 11. Build and test with:
 
 ```sh
-./gradlew test
+./gradlew build
 ```
 
-Run a development RuneLite client:
+Launch a development client with `./gradlew run`. For login, follow RuneLite's [Using Jagex Accounts](https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts) guide.
 
-```sh
-./gradlew run
-```
+[GitHub Actions](https://github.com/DevOldSchool/inspect/actions) checks the latest RuneLite release on pushes, pull requests and daily. See [AGENTS.md](AGENTS.md) for development guidelines and [LICENSE](LICENSE) for the BSD-2-Clause licence.

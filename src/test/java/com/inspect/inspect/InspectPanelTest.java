@@ -2,6 +2,7 @@ package com.inspect.inspect;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import com.inspect.item.ItemInspectInfo;
@@ -54,6 +55,135 @@ import org.junit.Test;
 
 public class InspectPanelTest
 {
+	private static PanelPreferences savedPreferences(Map<String, String> saved)
+	{
+		return new PanelPreferences(saved::get, saved::put,
+			() -> saved.keySet().removeIf(key -> key.startsWith("panelCollapsed.")));
+	}
+
+	@Test
+	public void resetLayoutExpandsAllTabsAndPersistsWithoutChangingFilterOrInspection() throws Exception
+	{
+		onEdt(() ->
+		{
+			Map<String, String> saved = new LinkedHashMap<>();
+			saved.put("panelCollapsed.player.selfComparison", "true");
+			saved.put("panelCollapsed.recent.recentItems", "true");
+			saved.put("panelDropFilter", "Rare");
+			saved.put("unrelatedSetting", "keep");
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.setPanelPreferences(savedPreferences(saved));
+			ItemInspectInfo item = ItemInspectInfo.builder().displayName("Test item")
+				.sourceSummary("Shop").build();
+			panel.showItemInfo(item, null, null, null);
+			clickButton(panel, "Item info");
+			clickButton(panel, "Sources");
+			NpcCombatInfo npc = NpcCombatInfo.builder().displayName("Guard")
+				.valuableDrops("Coins").rareDrops("Dragon dagger").build();
+			panel.showInfo(npc, null, null, Collections.emptyList());
+			clickButton(panel, "Combat info");
+			clickButton(panel, "Drop filters");
+			AbstractButton heading = findButton(panel, "Combat info");
+			long revision = panel.getViewRevision();
+			assertEquals(panel, findButton(panel, "Reset panel layout").getParent());
+			clickButton(panel, "Reset panel layout");
+			assertTrue(panel.isShowingNpc(npc));
+			assertEquals(revision, panel.getViewRevision());
+			assertSame(heading, findButton(panel, "Combat info"));
+			assertTrue(heading.getParent().getComponent(1).isVisible());
+			assertTrue(findButton(panel, "Drop filters").getParent().getComponent(1).isVisible());
+			assertEquals(ColorScheme.MEDIUM_GRAY_COLOR, findButton(panel, "Rare").getBackground());
+			assertFalse(saved.keySet().stream().anyMatch(key -> key.startsWith("panelCollapsed.")));
+			assertEquals("Rare", saved.get("panelDropFilter"));
+			assertEquals("keep", saved.get("unrelatedSetting"));
+			clickButton(panel, "Item");
+			assertTrue(findButton(panel, "Sources").getParent().getComponent(1).isVisible());
+			assertTrue(findButton(panel, "Item info").getParent().getComponent(1).isVisible());
+			InspectPanel restarted = new InspectPanel(null, null);
+			restarted.setPanelPreferences(savedPreferences(saved));
+			restarted.showItemInfo(item, null, null, null);
+			assertTrue(findButton(restarted, "Sources").getParent().getComponent(1).isVisible());
+			clickButton(restarted, "Sources");
+			assertEquals("true", saved.get("panelCollapsed.item.sources"));
+			return null;
+		});
+	}
+
+	@Test
+	public void collapseChoicesPersistWithoutHidingPageControls() throws Exception
+	{
+		onEdt(() ->
+		{
+			Map<String, String> saved = new LinkedHashMap<>();
+			PanelPreferences preferences = savedPreferences(saved);
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.setPanelPreferences(preferences);
+			ItemInspectInfo info = ItemInspectInfo.builder().displayName("Test item")
+				.sourceSummary("Shop").sourceUrl("https://oldschool.runescape.wiki/w/Test_item").build();
+			panel.showItemInfo(info, null, null, null);
+			AbstractButton heading = findButton(panel, "Sources");
+			Container group = heading.getParent();
+			int expandedHeight = panel.getPreferredSize().height;
+			heading.doClick();
+			assertEquals("true", saved.get("panelCollapsed.item.sources"));
+			assertFalse(group.getComponent(1).isVisible());
+			assertTrue(panel.getPreferredSize().height < expandedHeight);
+			// Wiki navigation belongs to the page, outside the collapsible Sources group.
+			assertEquals(panel, findButton(panel, "Open OSRS Wiki page").getParent());
+			panel.refreshActiveView();
+			assertFalse(findButton(panel, "Sources").getParent().getComponent(1).isVisible());
+
+			InspectPanel restarted = new InspectPanel(null, null);
+			restarted.setPanelPreferences(savedPreferences(saved));
+			restarted.showItemInfo(info, null, null, null);
+			assertFalse(findButton(restarted, "Sources").getParent().getComponent(1).isVisible());
+			clickButton(restarted, "Sources");
+			assertTrue(findButton(restarted, "Sources").getParent().getComponent(1).isVisible());
+			assertEquals("false", saved.get("panelCollapsed.item.sources"));
+			return null;
+		});
+	}
+
+	@Test
+	public void initialCachePreferenceIsRestoredAndOtherTabsRemainIndependent() throws Exception
+	{
+		onEdt(() ->
+		{
+			Map<String, String> saved = new LinkedHashMap<>();
+			saved.put("panelCollapsed.item.cache", "true");
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.setPanelPreferences(savedPreferences(saved));
+			assertFalse(findButton(panel, "Cache").getParent().getComponent(1).isVisible());
+			clickButton(panel, "NPC");
+			panel.showEmpty();
+			assertTrue(findButton(panel, "Cache").getParent().getComponent(1).isVisible());
+			return null;
+		});
+	}
+
+	@Test
+	public void savedDropFilterSurvivesRestartAndNpcsWithoutThatFilter() throws Exception
+	{
+		onEdt(() ->
+		{
+			Map<String, String> saved = new LinkedHashMap<>();
+			NpcCombatInfo info = NpcCombatInfo.builder().displayName("Guard")
+				.valuableDrops("Coins").rareDrops("Dragon dagger").build();
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.setPanelPreferences(savedPreferences(saved));
+			panel.showInfo(info, null, null, Collections.emptyList());
+			clickButton(panel, "Rare");
+			assertEquals("Rare", saved.get("panelDropFilter"));
+			InspectPanel restarted = new InspectPanel(null, null);
+			restarted.setPanelPreferences(savedPreferences(saved));
+			restarted.showInfo(info.toBuilder().rareDrops(null).build(), null, null, Collections.emptyList());
+			restarted.showInfo(info, null, null, Collections.emptyList());
+			assertEquals(net.runelite.client.ui.ColorScheme.MEDIUM_GRAY_COLOR,
+				findButton(restarted, "Rare").getBackground());
+			return null;
+		});
+	}
+
 	@Test
 	public void normalizesFuzzySearchAliases()
 	{
@@ -531,6 +661,63 @@ public class InspectPanelTest
 	}
 
 	@Test
+	public void bankGearLoadingAndResultsPreserveScrollButNewNpcStartsAtTop() throws Exception
+	{
+		NpcCombatInfo info = NpcCombatInfo.builder().displayName("Guard").stabDefence("0").build();
+		InspectPanel panel = onEdt(() ->
+		{
+			InspectPanel result = new InspectPanel(null, null);
+			JScrollPane pane = new JScrollPane(result);
+			pane.setSize(new Dimension(PluginPanel.PANEL_WIDTH, 120));
+			result.setGearRecommendationHandler(new InspectPanel.GearRecommendationHandler()
+			{
+				@Override
+				public void findGear(NpcCombatInfo selected)
+				{
+					result.showInfo(selected, EquipmentRecommendation.preview(selected), "Scanning bank and equipped gear...",
+						Collections.emptyList());
+				}
+
+				@Override
+				public void clearGear(NpcCombatInfo selected)
+				{
+				}
+			});
+			result.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.emptyList());
+			pane.doLayout();
+			result.doLayout();
+			return result;
+		});
+		onEdt(() -> null);
+		onEdt(() ->
+		{
+			((javax.swing.JViewport) panel.getParent()).setViewPosition(new Point(0, 300));
+			clickButton(panel, "Find gear in bank");
+			return null;
+		});
+		onEdt(() -> null);
+		assertEquals(300, (int) onEdt(() -> ((javax.swing.JViewport) panel.getParent()).getViewPosition().y));
+		for (String status : Arrays.asList("Ranked bank gear within each equipment slot.", "Selection cleared.",
+			"Unable to load bank item stats.", "No matching equipment found."))
+		{
+			onEdt(() ->
+			{
+				panel.showInfo(info, EquipmentRecommendation.preview(info), status, Collections.emptyList());
+				return null;
+			});
+			onEdt(() -> null);
+			assertEquals(300, (int) onEdt(() -> ((javax.swing.JViewport) panel.getParent()).getViewPosition().y));
+		}
+		onEdt(() ->
+		{
+			panel.showInfo(info.toBuilder().displayName("Goblin").build(), null, null, Collections.emptyList());
+			return null;
+		});
+		onEdt(() -> null);
+		assertEquals(0, (int) onEdt(() -> ((javax.swing.JViewport) panel.getParent()).getViewPosition().y));
+	}
+
+	@Test
 	public void npcRequirementRefreshPreservesScrollPosition() throws Exception
 	{
 		AtomicReference<JScrollPane> scrollPane = new AtomicReference<>();
@@ -831,6 +1018,34 @@ public class InspectPanelTest
 	}
 
 	@Test
+	public void equipmentRecommendationsShowSlotRanksStatsAndInspectableItems() throws Exception
+	{
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			com.inspect.npc.EquipmentScore score = new com.inspect.npc.EquipmentScore("Stab", 20d, "Strength", 10d, 0d);
+			NpcCombatInfo npc = NpcCombatInfo.builder().displayName("Guard").stabDefence("0").build();
+			EquipmentRecommendation recommendation = new EquipmentRecommendation(npc, com.inspect.npc.CombatStyleRecommendation.STAB,
+				Arrays.asList(new EquipmentRecommendation.RecommendedItem(10, "Spear", "Weapon", 35d, true, false, 1, score, true),
+					new EquipmentRecommendation.RecommendedItem(11, "Helmet", "Head", 35d, false, true, 1, score, false)));
+			AtomicInteger inspected = new AtomicInteger();
+			panel.setItemInspectHandler((id, name) -> inspected.set(id));
+			panel.showInfo(npc, recommendation, "Ranked bank gear within each equipment slot.", Collections.emptyList());
+			UiSnapshot snapshot = UiSnapshot.capture(panel);
+			assertTrue(snapshot.text.contains("Weapon"));
+			assertTrue(snapshot.text.contains("Head"));
+			assertTrue(snapshot.text.contains("1. Spear (2h)"));
+			assertTrue(snapshot.text.contains("1. Helmet"));
+			assertTrue(snapshot.text.contains("Stab +20 · Strength +10 · Prayer 0"));
+			assertTrue(snapshot.text.contains("Score 35 (equipped)"));
+			assertTrue(snapshot.text.contains("Two-handed weapons also occupy the shield slot"));
+			clickButton(panel, "1. Spear (2h)");
+			assertEquals(10, inspected.get());
+			return null;
+		});
+	}
+
+	@Test
 	public void npcPickerLoadsThumbnailWithoutBlockingSelection() throws Exception
 	{
 		java.util.concurrent.CompletableFuture<java.awt.image.BufferedImage> loaded = new java.util.concurrent.CompletableFuture<>();
@@ -951,13 +1166,40 @@ public class InspectPanelTest
 			InspectPanel panel = new InspectPanel(null, null);
 			panel.showItemInfo(ItemInspectInfo.builder().displayName("Expensive item").build(), null, null,
 				new ItemPriceSummary("3,000,000,000 gp", "60,000 gp", "40,000 gp",
-					"-2,999,940,000 gp", -2_999_940_000L));
+					"-2,999,940,000 gp", -2_999_940_000L, "100 gp", "1 nature rune; unlimited fire runes equipped."));
 			return UiSnapshot.capture(panel);
 		});
 
 		assertTrue(snapshot.text.contains("3,000,000,000 gp"));
 		assertTrue(snapshot.text.contains("HA loss"));
 		assertTrue(snapshot.text.contains("-2,999,940,000 gp"));
+	}
+
+	@Test
+	public void updatesCastingCostsWithoutReplacingAnotherView() throws Exception
+	{
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			ItemInspectInfo info = ItemInspectInfo.builder().displayName("Test item").build();
+			ItemPriceSummary original = new ItemPriceSummary("450 gp", "600 gp", "400 gp", "+25 gp", 25L,
+				"125 gp", "1 nature rune + 5 fire runes.");
+			ItemPriceSummary equipped = new ItemPriceSummary("450 gp", "600 gp", "400 gp", "+50 gp", 50L,
+				"100 gp", "1 nature rune; unlimited fire runes equipped.");
+			panel.showItemInfo(info, null, null, original);
+			panel.updateItemPrices(info, equipped);
+			assertTrue(UiSnapshot.capture(panel).text.contains("100 gp"));
+			assertTrue(UiSnapshot.capture(panel).text.contains("unlimited fire runes equipped"));
+			panel.showItemLoading("Another item");
+			long revision = panel.getViewRevision();
+			panel.updateItemPrices(info, original);
+			assertEquals(revision, panel.getViewRevision());
+			assertFalse(UiSnapshot.capture(panel).text.contains("125 gp"));
+			panel.showItemInfo(ItemInspectInfo.builder().displayName("Different item").build(), null, null, original);
+			panel.updateItemPrices(info, equipped);
+			assertFalse(UiSnapshot.capture(panel).text.contains("unlimited fire runes equipped"));
+			return null;
+		});
 	}
 
 	@Test
